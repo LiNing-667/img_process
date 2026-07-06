@@ -1,0 +1,4 @@
+/home/lin/loongson_2k0300_workspace/build/CMakeFiles/rebuild_cache.dir
+/home/lin/loongson_2k0300_workspace/build/CMakeFiles/edit_cache.dir
+/home/lin/loongson_2k0300_workspace/build/CMakeFiles/PilotApp.dir
+/home/lin/loongson_2k0300_workspace/build/CMakeFiles/MonitorApp.dir
