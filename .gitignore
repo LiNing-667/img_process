@@ -2,5 +2,6 @@
 linux-4.19/
 ncnn_new/
 opencv_la64_install/
+build/
 *.bin
 *.tar.gz

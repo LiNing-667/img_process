@@ -1,1 +1,0 @@
-/home/lin/loongson-gnu-toolchain-8.3-x86_64-loongarch64-linux-gnu-rc1.4/bin/loongarch64-linux-gnu-g++     CMakeFiles/PilotApp.dir/src/pilot.cpp.o CMakeFiles/PilotApp.dir/src/ik_solver.c.o  -o PilotApp  -lm -lpthread 
