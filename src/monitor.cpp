@@ -678,6 +678,12 @@ public:
     HttpStreamServer(int port) {
         server_fd = socket(AF_INET, SOCK_STREAM, 0);
         int opt = 1; setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        
+        // 【核心修复】：必须将 server_fd 设置为非阻塞模式！
+        // 否则主循环的 accept() 会把整个图像处理和图传线程彻底卡死
+        int flags = fcntl(server_fd, F_GETFL, 0);
+        fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+
         struct sockaddr_in address; address.sin_family = AF_INET;
         address.sin_addr.s_addr = INADDR_ANY; address.sin_port = htons(port);
         bind(server_fd, (struct sockaddr *)&address, sizeof(address));
@@ -687,7 +693,7 @@ public:
 
     int acceptClient() {
         int client_socket = accept(server_fd, nullptr, nullptr);
-        if (client_socket < 0) return -1;
+        if (client_socket < 0) return -1; // 非阻塞模式下，没人连会直接 return -1，不卡主线程
         struct timeval timeout; timeout.tv_sec = 1; timeout.tv_usec = 0;
         setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
         cout << "\n检测到浏览器连接 开始推流" << endl;
@@ -695,7 +701,6 @@ public:
         send(client_socket, header.c_str(), header.size(), MSG_NOSIGNAL);
         return client_socket;
     }
-
     bool sendFrame(int client_socket, const Mat& raw_frame, vector<uchar>& buffer, const vector<int>& encode_params) {
         imencode(".jpg", raw_frame, buffer, encode_params);
         string chunk_header = "--myboundary\r\nContent-Type: image/jpeg\r\nContent-Length: " + to_string(buffer.size()) + "\r\n\r\n";
@@ -707,7 +712,7 @@ public:
 };
 
 // ============================================================================
-// 【新增】PC 上位机二进制协议服务器 (Socket)
+// PC 上位机二进制协议服务器 (Socket)
 // ============================================================================
 class PcProtocolServer {
 private:
@@ -741,8 +746,9 @@ private:
         while (true) {
             int client = accept(video_server_fd, nullptr, nullptr);
             if (client >= 0) {
-                if (video_sock >= 0) close(video_sock);
-                video_sock = client;
+                // 【修复】：自动挤掉并释放旧连接，防止上位机断线重连导致 fd 泄漏
+                int old_sock = video_sock.exchange(client);
+                if (old_sock >= 0) close(old_sock);
                 std::cout << ">>> [PC协议] 图传链路已连接! 开始高速推流 <<<" << std::endl;
             }
         }
@@ -762,6 +768,9 @@ private:
                 if (!consumed) break; // 数据不足或CRC错误，等待下一波接收
                 buf.erase(buf.begin(), buf.begin() + consumed);
 
+                // ==========================================================
+                // 【核心指令路由】：对接 Monitor 原有系统
+                // ==========================================================
                 // ==========================================================
                 // 【核心指令路由】：对接 Monitor 原有系统
                 // ==========================================================
@@ -789,15 +798,33 @@ private:
                     case protocol::CMD_EXEC_PROGRAM: {
                         uint8_t prog_id = f.payload[0];
                         char cmd_buf[32];
-                        sprintf(cmd_buf, "DEMO%03d", prog_id); // 自动补齐为 DEMO001, DEMO091 等
+                        sprintf(cmd_buf, "DEMO%03d", prog_id); 
                         std::cout << "[PC指令] 触发系统动作流水线: " << cmd_buf << std::endl;
                         
-                        // 【绝妙打通】：把上位机传来的 ID 直接转给原有的视觉任务系统执行！
                         std::lock_guard<std::mutex> lock(g_task_mtx);
                         g_demo_task.pending = true;
                         g_demo_task.raw_cmd = cmd_buf;
-                        g_demo_task.class_id = 0; // 这里的具体 ID 可在后续代码根据需自行完善
+                        g_demo_task.class_id = 0; 
                         
+                        auto resp = protocol::build_resp_ok();
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                    // 【新增】：急停指令
+                    case protocol::CMD_EMERGENCY: {
+                        std::cout << "\n[PC指令] !!! 收到 EMERGENCY 急停指令 !!!" << std::endl;
+                        if (g_serial_fd >= 0) {
+                            std::string send_str = "0\r\n"; // "0" 在 pilot.cpp 中直接触发底盘锁死
+                            write(g_serial_fd, send_str.c_str(), send_str.length());
+                        }
+                        auto resp = protocol::build_resp_ok();
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                    // 【新增】：文本指令
+                    case protocol::CMD_TEXT: {
+                        std::string text((const char*)f.payload, f.plen);
+                        std::cout << "[PC指令] 收到文本命令: " << text << std::endl;
                         auto resp = protocol::build_resp_ok();
                         send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
                         break;
@@ -1794,10 +1821,10 @@ int main() {
     CommunicationManager::startThreads();
 
     // 4. HTTP 推流服务器初始化 (供浏览器预览)
-    HttpStreamServer stream_server(SystemConfig::HTTP_STREAM_PORT);
+    HttpStreamServer stream_server(SystemConfig::HTTP_STREAM_PORT); // 默认 8080
 
-    // 【新增】4.5 PC 上位机二进制通信服务器初始化 (指令端口 8081, 图传端口 8082)
-    PcProtocolServer pc_server(8081, 8082);
+    // 【修改】：使用正确的上位机通信端口 8000 和 8001
+    PcProtocolServer pc_server(8000, 8001);
 
     VisionEngine engine(pilot_comm);
     const vector<int> encode_params = {IMWRITE_JPEG_QUALITY, SystemConfig::JPEG_QUALITY};
@@ -1808,8 +1835,8 @@ int main() {
     while (true) {
         // HTTP 依然保留非阻塞接受逻辑，防止没开网页时卡死
         if (client_socket < 0) {
-            client_socket = accept(stream_server.server_fd, nullptr, nullptr);
-            // 注意：必须设置非阻塞或者超时，不然原有的 acceptClient 会卡住你的高速推流
+            // 【修复】：使用封装好的非阻塞方法，而不是原生的 accept
+            client_socket = stream_server.acceptClient(); 
         }
 
         Mat raw_frame;
