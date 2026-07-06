@@ -26,6 +26,8 @@
 #include <map> 
 #include <csignal> 
 #include <opencv2/aruco.hpp> 
+#define PROTOCOL_VIDEO_ENABLE
+#include "protocol.hpp"
 
 using namespace cv;
 using namespace std;
@@ -671,9 +673,8 @@ namespace CameraManager {
 
 
 class HttpStreamServer {
-private:
-    int server_fd;
 public:
+    int server_fd;
     HttpStreamServer(int port) {
         server_fd = socket(AF_INET, SOCK_STREAM, 0);
         int opt = 1; setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -702,6 +703,131 @@ public:
         if (send(client_socket, buffer.data(), buffer.size(), MSG_NOSIGNAL) < 0) return false;
         if (send(client_socket, "\r\n", 2, MSG_NOSIGNAL) < 0) return false;
         return true;
+    }
+};
+
+// ============================================================================
+// 【新增】PC 上位机二进制协议服务器 (Socket)
+// ============================================================================
+class PcProtocolServer {
+private:
+    int cmd_server_fd, video_server_fd;
+    std::atomic<int> cmd_sock{-1};
+    std::atomic<int> video_sock{-1};
+    
+    int createServer(int port) {
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        int opt = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        struct sockaddr_in addr; addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = INADDR_ANY; addr.sin_port = htons(port);
+        bind(fd, (struct sockaddr *)&addr, sizeof(addr));
+        listen(fd, 3);
+        return fd;
+    }
+
+    void cmdAcceptLoop() {
+        while (true) {
+            int client = accept(cmd_server_fd, nullptr, nullptr);
+            if (client >= 0) {
+                if (cmd_sock >= 0) close(cmd_sock);
+                cmd_sock = client;
+                std::cout << "\n>>> [PC协议] 指令链路已连接! (来自上位机) <<<" << std::endl;
+                std::thread(&PcProtocolServer::cmdWorker, this, client).detach();
+            }
+        }
+    }
+
+    void videoAcceptLoop() {
+        while (true) {
+            int client = accept(video_server_fd, nullptr, nullptr);
+            if (client >= 0) {
+                if (video_sock >= 0) close(video_sock);
+                video_sock = client;
+                std::cout << ">>> [PC协议] 图传链路已连接! 开始高速推流 <<<" << std::endl;
+            }
+        }
+    }
+
+    void cmdWorker(int sock) {
+        std::vector<uint8_t> buf;
+        uint8_t tmp[4096];
+        while (cmd_sock == sock) {
+            int n = recv(sock, tmp, sizeof(tmp), 0);
+            if (n <= 0) break;
+            buf.insert(buf.end(), tmp, tmp + n);
+
+            while (true) {
+                protocol::ParsedFrame f;
+                size_t consumed = protocol::consume(buf.data(), buf.size(), f);
+                if (!consumed) break; // 数据不足或CRC错误，等待下一波接收
+                buf.erase(buf.begin(), buf.begin() + consumed);
+
+                // ==========================================================
+                // 【核心指令路由】：对接 Monitor 原有系统
+                // ==========================================================
+                switch (f.cmd) {
+                    case protocol::CMD_HEARTBEAT: {
+                        auto resp = protocol::build_resp_ok("alive");
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                    case protocol::CMD_VEHICLE_POS: {
+                        float x, y, z, yaw;
+                        protocol::parse_vehicle_pos(f, x, y, z, yaw);
+                        std::cout << "[PC指令] 收到小车坐标: X=" << x << " Y=" << y << " Yaw=" << yaw << std::endl;
+                        auto resp = protocol::build_resp_ok();
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                    case protocol::CMD_ARM_JOINTS: {
+                        uint8_t num = protocol::parse_arm_num(f);
+                        std::cout << "[PC指令] 收到 " << (int)num << " 个关节角度下发" << std::endl;
+                        auto resp = protocol::build_resp_ok();
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                    case protocol::CMD_EXEC_PROGRAM: {
+                        uint8_t prog_id = f.payload[0];
+                        char cmd_buf[32];
+                        sprintf(cmd_buf, "DEMO%03d", prog_id); // 自动补齐为 DEMO001, DEMO091 等
+                        std::cout << "[PC指令] 触发系统动作流水线: " << cmd_buf << std::endl;
+                        
+                        // 【绝妙打通】：把上位机传来的 ID 直接转给原有的视觉任务系统执行！
+                        std::lock_guard<std::mutex> lock(g_task_mtx);
+                        g_demo_task.pending = true;
+                        g_demo_task.raw_cmd = cmd_buf;
+                        g_demo_task.class_id = 0; // 这里的具体 ID 可在后续代码根据需自行完善
+                        
+                        auto resp = protocol::build_resp_ok();
+                        send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
+                        break;
+                    }
+                }
+            }
+        }
+        close(sock);
+        if (cmd_sock == sock) cmd_sock = -1;
+        std::cout << "[PC协议] 指令链路断开" << std::endl;
+    }
+
+public:
+    PcProtocolServer(int cmd_port, int video_port) {
+        cmd_server_fd = createServer(cmd_port);
+        video_server_fd = createServer(video_port);
+        std::thread(&PcProtocolServer::cmdAcceptLoop, this).detach();
+        std::thread(&PcProtocolServer::videoAcceptLoop, this).detach();
+        std::cout << "[Monitor] PC 端二进制协议网关已启动 | 指令端口: " << cmd_port << " | 图传端口: " << video_port << std::endl;
+    }
+
+    void sendVideo(const cv::Mat& frame) {
+        int sock = video_sock.load();
+        if (sock >= 0) {
+            // 使用 protocol.hpp 中的 namespace video 下的方法
+            if (!video::send_jpeg(sock, frame, 60)) {
+                close(sock);
+                video_sock = -1;
+            }
+        }
     }
 };
 
@@ -1660,61 +1786,61 @@ public:
 // [999] 主程序入口
 // ============================================================================
 int main() {
-    // 1. 系统底层与串口初始化
     SystemInit::initAll();
-
-    // 2. 硬件摄像头初始化与取帧线程
     VideoCapture cap = CameraManager::probeAndInit();
     SharedFrame shared_frame;
     CameraManager::startCaptureThread(cap, shared_frame);
-
-    // 3. 通信模块初始化 (终端控制台与底层串口监听)
     PilotCommunicator pilot_comm;
     CommunicationManager::startThreads();
 
-    // 4. HTTP 推流服务器初始化
+    // 4. HTTP 推流服务器初始化 (供浏览器预览)
     HttpStreamServer stream_server(SystemConfig::HTTP_STREAM_PORT);
 
-    // 5. 高级视觉处理引擎
+    // 【新增】4.5 PC 上位机二进制通信服务器初始化 (指令端口 8081, 图传端口 8082)
+    PcProtocolServer pc_server(8081, 8082);
+
     VisionEngine engine(pilot_comm);
     const vector<int> encode_params = {IMWRITE_JPEG_QUALITY, SystemConfig::JPEG_QUALITY};
 
-    // --- 全局流水线引擎核心 ---
+    // 为 HTTP 客户端定义局部 socket (原代码逻辑)
+    int client_socket = -1;
+
     while (true) {
-        int client_socket = stream_server.acceptClient();
-        if (client_socket < 0) continue;
+        // HTTP 依然保留非阻塞接受逻辑，防止没开网页时卡死
+        if (client_socket < 0) {
+            client_socket = accept(stream_server.server_fd, nullptr, nullptr);
+            // 注意：必须设置非阻塞或者超时，不然原有的 acceptClient 会卡住你的高速推流
+        }
 
         Mat raw_frame;
         vector<uchar> buffer;
         buffer.reserve(128 * 1024);
 
         while (true) {
-            // [流水线步骤 1] 抓取最新帧
             if (!CameraManager::getLatestFrame(shared_frame, raw_frame, 50)) continue;
 
-            // [流水线步骤 2] 获取当前排队任务
             DemoTask current_task = TaskManager::fetchTask();
-
-            // [流水线步骤 3] 独立后台视觉伺服任务 
             engine.processAutoCamera(raw_frame);
-
-            // [流水线步骤 4] 执行离散型视觉动作任务
             if (current_task.pending) {
                 engine.processTask(current_task, raw_frame); 
             }
-
-            // [流水线步骤 5] ArUco 标记获取与渲染
             engine.processArucoFix(raw_frame);
-
-            // [流水线步骤 6] OSD UI 渲染叠加
             engine.renderOsd(raw_frame);
 
-            // [流水线步骤 7] 压缩推流
-            if (!stream_server.sendFrame(client_socket, raw_frame, buffer, encode_params)) break;
-        }
+            // =======================================================
+            // 【核心注入】：将画面喂给 PC 二进制高速图传
+            // =======================================================
+            pc_server.sendVideo(raw_frame);
 
-        close(client_socket);
-        cout << "[Monitor] Web客户端已断开" << endl;
+            // 原有的 HTTP 推流逻辑
+            if (client_socket >= 0) {
+                if (!stream_server.sendFrame(client_socket, raw_frame, buffer, encode_params)) {
+                    close(client_socket);
+                    client_socket = -1; // 客户端断开，退回外层重新 accept
+                    break;
+                }
+            }
+        }
     }
     return 0;
 }
