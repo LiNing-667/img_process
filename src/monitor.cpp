@@ -311,99 +311,81 @@ public:
         write(g_serial_fd, buffer, strlen(buffer));
     }
 };
+// ============================================================================
+// 【新增】统一文本指令解析网关 (支持本地终端输入与远端 PC 发送)
+// ============================================================================
+void processTextCommand(const std::string& cmd_line) {
+    if (cmd_line.empty()) return;
+    std::string lower_cmd = cmd_line; 
+    for (auto& c : lower_cmd) c = tolower(c);
 
-void terminalCommandThreadFunc() {
-    std::cout << "========================================================" << std::endl;
-    std::cout << "[终端] 串口遥控模式就绪！输入 demoxyz 触发视觉检测与抓取！" << std::endl;
-    std::cout << "========================================================" << std::endl;
-
-    std::string cmd_line;
-    while (std::getline(std::cin, cmd_line)) {
-        if (cmd_line.empty()) continue;
-        std::string lower_cmd = cmd_line; 
-        for (auto& c : lower_cmd) c = tolower(c);
-
-        if (lower_cmd == "fix") {
-            g_trigger_aruco_fix = true;
-            std::cout << "\n>>> [静态标定] 已下发单次 ArUco 捕捉指令..." << std::endl;
-            continue;
+    if (lower_cmd == "fix") {
+        g_trigger_aruco_fix = true;
+        std::cout << "\n>>> [静态标定] 已下发单次 ArUco 捕捉指令..." << std::endl;
+        return;
+    }
+    if (lower_cmd == "nod") {
+        g_auto_cam_running = true;
+        g_cam_pan = 37.0f; g_cam_tilt = 38.0f;
+        if (g_serial_fd >= 0) {
+            char buf[64];
+            sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
+            write(g_serial_fd, buf, strlen(buf));
         }
-        if (lower_cmd == "nod") {
-            g_auto_cam_running = true;
-            g_cam_pan = 37.0f; g_cam_tilt = 38.0f;
-            if (g_serial_fd >= 0) {
-                char buf[64];
-                sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
-                write(g_serial_fd, buf, strlen(buf));
-            }
-            std::cout << "\n>>> [自适应云台] 启动！开始提取车板特征曲线..." << std::endl;
-            continue;
+        std::cout << "\n>>> [自适应云台] 启动！开始提取车板特征曲线..." << std::endl;
+        return;
+    }
+    if (lower_cmd == "find") {
+        std::cout << "\n>>> [状态机] 启动巡航搜索，下发云台就位指令 DEMO220..." << std::endl;
+        if (g_serial_fd >= 0) {
+            std::string send_str = "DEMO220 0 0 0 0 0 0 0 0 0 0\r\n";
+            write(g_serial_fd, send_str.c_str(), send_str.length());
         }
-        // 拦截 find 指令，启动巡航搜索
-        if (lower_cmd == "find") {
-            std::cout << "\n>>> [状态机] 启动巡航搜索，下发云台就位指令 DEMO220..." << std::endl;
-            if (g_serial_fd >= 0) {
-                // 下发指令启动第一段扫描
-                std::string send_str = "DEMO220 0 0 0 0 0 0 0 0 0 0\r\n";
-                write(g_serial_fd, send_str.c_str(), send_str.length());
-            }
-            continue;
-        }
+        return;
+    }
 
-        // ==========================================
-        // 线性全自动工作流 (动作链)
-        // ==========================================
-        if (lower_cmd == "start") {
-            // 开启独立线程，后台自动化指挥，不阻塞终端输入
-            std::thread([]() {
-                std::cout << "\n=============================================" << std::endl;
-                std::cout << ">>> 全自动装配宏动作链 [START] 启动！" << std::endl;
-                std::cout << "=============================================\n" << std::endl;
+    if (lower_cmd == "start") {
+        std::thread([]() {
+            std::cout << "\n=============================================" << std::endl;
+            std::cout << ">>> 全自动装配宏动作链 [START] 启动！" << std::endl;
+            std::cout << "=============================================\n" << std::endl;
 
-                // --- 定义内部辅助函数 ---
-                
-                // 1. 发送串口指令并延时等待执行完毕 (主要用于小车和 DO 盲操作)
-                auto send_serial_cmd = [](const std::string& cmd, int wait_ms) {
-                    if (g_serial_fd >= 0) {
-                        std::string full_cmd = cmd + "\r\n";
-                        write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
-                        std::cout << ">>> [动作链] 下发指令: " << cmd << " (等待 " << wait_ms/1000.0 << " 秒)" << std::endl;
-                    }
-                    usleep(wait_ms * 1000);
-                };
+            auto send_serial_cmd = [](const std::string& cmd, int wait_ms) {
+                if (g_serial_fd >= 0) {
+                    std::string full_cmd = cmd + "\r\n";
+                    write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
+                    std::cout << ">>> [动作链] 下发指令: " << cmd << " (等待 " << wait_ms/1000.0 << " 秒)" << std::endl;
+                }
+                usleep(wait_ms * 1000);
+            };
 
-                // 2. 触发一次云台视觉调平 (Nod) 并等待其完成
-                auto do_nod = []() {
-                    std::cout << ">>> [动作链] 触发云台视觉调平 (Nod)..." << std::endl;
-                    g_auto_cam_running = true;
-                    g_cam_pan = 37.0f; 
-                    g_cam_tilt = 38.0f; // 初始稍微抬点头寻找
-                    if (g_serial_fd >= 0) {
-                        char buf[64]; sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
-                        write(g_serial_fd, buf, strlen(buf));
-                    }
-                    usleep(1000000);  // 物理到位后，再开启视觉状态机
-                    g_auto_cam_running = true;
-                    // 智能阻塞：直到 Monitor 内部算法认为调平完成并置为 false
-                    while (g_auto_cam_running) { usleep(100000); }
-                };
+            auto do_nod = []() {
+                std::cout << ">>> [动作链] 触发云台视觉调平 (Nod)..." << std::endl;
+                g_auto_cam_running = true;
+                g_cam_pan = 37.0f; g_cam_tilt = 38.0f;
+                if (g_serial_fd >= 0) {
+                    char buf[64]; sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
+                    write(g_serial_fd, buf, strlen(buf));
+                }
+                usleep(1000000);  
+                g_auto_cam_running = true;
+                while (g_auto_cam_running) { usleep(100000); }
+            };
 
-                // 3. 派发视觉任务并等待机械臂执行
-                auto do_vision_demo = [](int arm_id, int class_id, int action_id, const std::string& cmd, int wait_ms) {
-                    std::cout << ">>> [动作链] 派发视觉任务: " << cmd << " (ARM" << arm_id << " 锁定 ID=" << class_id << ")" << std::endl;
-                    {
-                        std::lock_guard<std::mutex> lock(g_task_mtx);
-                        g_demo_task.pending = true;
-                        g_demo_task.arm_id = arm_id;     
-                        g_demo_task.class_id = class_id;   
-                        g_demo_task.action_id = action_id;  
-                        g_demo_task.raw_cmd = cmd;
-                    }
-                    // 等待视觉 PnP 解算 + 机械臂物理运动落位
-                    usleep(wait_ms * 1000); 
-                };
+            auto do_vision_demo = [](int arm_id, int class_id, int action_id, const std::string& cmd, int wait_ms) {
+                std::cout << ">>> [动作链] 派发视觉任务: " << cmd << " (ARM" << arm_id << " 锁定 ID=" << class_id << ")" << std::endl;
+                {
+                    std::lock_guard<std::mutex> lock(g_task_mtx);
+                    g_demo_task.pending = true;
+                    g_demo_task.arm_id = arm_id;     
+                    g_demo_task.class_id = class_id;   
+                    g_demo_task.action_id = action_id;  
+                    g_demo_task.raw_cmd = cmd;
+                }
+                usleep(wait_ms * 1000); 
+            };
 
-                // =======================================================
+                            // =======================================================
                 // 动作链正式开始编排 (时间单位为毫秒 ms)
                 // =======================================================
 
@@ -437,49 +419,59 @@ void terminalCommandThreadFunc() {
             //  send_serial_cmd("MW 20", 3000); 
 
 
-                // 第7步：运行demo091 (虚拟框ID=9的坐标提取，并由底座缓存坐标)
-                do_vision_demo(0, 9, 1, "DEMO091", 20000); 
-                // 第8步：运行do031 (交接 + ARM0提取091记忆坐标)
-                send_serial_cmd("DO031", 25000); 
-                // 9 :
-                send_serial_cmd("MS 30", 2000);
+            // 第7步：运行demo091 (虚拟框ID=9的坐标提取，并由底座缓存坐标)
+            do_vision_demo(0, 9, 1, "DEMO091", 20000); 
+            // 第8步：运行do031 (交接 + ARM0提取091记忆坐标)
+            send_serial_cmd("DO031", 25000); 
+            // 9 :
+            send_serial_cmd("MS 30", 2000) ;
 
-                std::cout << ">>> 动作链结束！" << std::endl;
+            std::cout << ">>> 动作链结束！" << std::endl;
+        }).detach(); 
+        return;
+    }
 
-            }).detach(); // 线程分离，不影响你继续在终端敲指令
-            continue;
-        }
-
-        if (lower_cmd.rfind("demo", 0) == 0 && lower_cmd.length() == 7) {
-            int x = lower_cmd[4] - '0'; 
-            int y = lower_cmd[5] - '0'; 
-            int z = lower_cmd[6] - '0'; 
-            if (x >= 0 && x <= 1 && y >= 0 && z >= 0) { 
-                std::lock_guard<std::mutex> lock(g_task_mtx);
-                g_demo_task.pending = true;
-                g_demo_task.arm_id = x; g_demo_task.class_id = y; g_demo_task.action_id = z;
-                std::string upper_cmd = lower_cmd;
-                for (auto& c : upper_cmd) c = toupper(c);
-                g_demo_task.raw_cmd = upper_cmd; 
-                std::cout << "[Monitor] 已接收视觉任务 -> 目标臂: ARM" << x << " | 物体ID: " << y << std::endl;
-                continue; 
-            }
-        }
-        if (lower_cmd.rfind("do", 0) == 0 && lower_cmd.length() == 5) {
+    if (lower_cmd.rfind("demo", 0) == 0 && lower_cmd.length() == 7) {
+        int x = lower_cmd[4] - '0'; 
+        int y = lower_cmd[5] - '0'; 
+        int z = lower_cmd[6] - '0'; 
+        if (x >= 0 && x <= 1 && y >= 0 && z >= 0) { 
+            std::lock_guard<std::mutex> lock(g_task_mtx);
+            g_demo_task.pending = true;
+            g_demo_task.arm_id = x; g_demo_task.class_id = y; g_demo_task.action_id = z;
             std::string upper_cmd = lower_cmd;
-            for (auto& c : upper_cmd) c = toupper(c); 
-            if (g_serial_fd >= 0) {
-                std::string send_str = upper_cmd + " 0 0 0 0 0 0 0 0 0 0\r\n";
-                write(g_serial_fd, send_str.c_str(), send_str.length());
-                std::cout << "[Monitor] 下发盲操作 -> " << upper_cmd << std::endl;
-            }
-            continue; 
+            for (auto& c : upper_cmd) c = toupper(c);
+            g_demo_task.raw_cmd = upper_cmd; 
+            std::cout << "[Monitor] 已接收视觉任务 -> 目标臂: ARM" << x << " | 物体ID: " << y << std::endl;
+            return; 
         }
+    }
+    if (lower_cmd.rfind("do", 0) == 0 && lower_cmd.length() == 5) {
+        std::string upper_cmd = lower_cmd;
+        for (auto& c : upper_cmd) c = toupper(c); 
         if (g_serial_fd >= 0) {
-            std::string send_str = cmd_line + "\r\n";
+            std::string send_str = upper_cmd + " 0 0 0 0 0 0 0 0 0 0\r\n";
             write(g_serial_fd, send_str.c_str(), send_str.length());
-            std::cout << "[串口发往Pilot] -> " << cmd_line << std::endl;
+            std::cout << "[Monitor] 下发盲操作 -> " << upper_cmd << std::endl;
         }
+        return; 
+    }
+    // 未知指令，直接向底盘透传
+    if (g_serial_fd >= 0) {
+        std::string send_str = cmd_line + "\r\n";
+        write(g_serial_fd, send_str.c_str(), send_str.length());
+        std::cout << "[串口发往Pilot] -> " << cmd_line << std::endl;
+    }
+}
+
+void terminalCommandThreadFunc() {
+    std::cout << "========================================================" << std::endl;
+    std::cout << "[终端] 串口遥控模式就绪！输入 demoxyz 触发视觉检测与抓取！" << std::endl;
+    std::cout << "========================================================" << std::endl;
+
+    std::string cmd_line;
+    while (std::getline(std::cin, cmd_line)) {
+        processTextCommand(cmd_line); // 统一交由网关处理
     }
 }
 
@@ -821,10 +813,19 @@ private:
                         send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
                         break;
                     }
-                    // 【新增】：文本指令
+
+                    // 【修改】：文本指令路由打通
                     case protocol::CMD_TEXT: {
                         std::string text((const char*)f.payload, f.plen);
-                        std::cout << "[PC指令] 收到文本命令: " << text << std::endl;
+                        // 清理上位机可能不小心发送过来的换行符
+                        text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+                        text.erase(std::remove(text.begin(), text.end(), '\n'), text.end());
+                        
+                        std::cout << "\n[PC指令] 收到文本命令: " << text << std::endl;
+                        
+                        // 【核心打通】：将上位机发来的文本交给中央网关解析
+                        processTextCommand(text); 
+                        
                         auto resp = protocol::build_resp_ok();
                         send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
                         break;
