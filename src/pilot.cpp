@@ -672,10 +672,10 @@ namespace DemoManager {
             g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); 
             std::cout << "\n>>>开始执行demo000 <<<" << std::endl;
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); 
-            g_arm.moveSmooth(0, px , py + 6.0f, -4.0 , f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000); 
-            g_arm.moveSmooth(0, px , py + 6.0f, -7.2 , f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(100000);
+            g_arm.moveSmooth(0, px-2 , py + 6.0f, -4.0 , f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000); 
+            g_arm.moveSmooth(0, px-2 , py + 6.0f, -7.2 , f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(100000);
             g_arm.setServoAngle(0, 6, Arm0_close); usleep(1500000);  
-            g_arm.moveSmooth(0, px , py + 6.0f, pz + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000); 
+            g_arm.moveSmooth(0, px-2 , py + 6.0f, pz + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000); 
             std::cout << ">>>  执行完毕！ <<<\n" << std::endl;
             g_arm.moveSmooth(0, -13 , 12 , 5, -0.1, 0, -1, -1, 0, 0); 
 
@@ -916,14 +916,14 @@ namespace DemoManager {
                 float px_arm1 = px + 0.02f;  // X 轴极微小的标定误差补偿
                 float py_arm1 = py + 18.2f;  // Y 轴平移 18.2 厘米，瞬间对齐物理空间！
 
-                g_arm.moveSmooth(1, px_arm1, py_arm1 - 3.2f , 8.0f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
+                g_arm.moveSmooth(1, px_arm1-0.5, py_arm1 - 3.2f , 8.0f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
                 g_arm.setServoAngle(1, 15, Arm1_open); usleep(600000);
-                g_arm.moveSmooth(1, px_arm1, py_arm1, 5.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
+                g_arm.moveSmooth(1, px_arm1-0.5, py_arm1, 5.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
                 g_arm.setServoAngle(1, 15, Arm1_close); 
                 
-                g_arm.moveSmooth(0, px -1.0f, py + 11.5f , 5.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-                g_arm.moveSmooth(0, px -1.0f, py + 9.5f , 4.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-                g_arm.moveSmooth(0, px -1.0f, py + 9.5f , 2.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(500000);
+                g_arm.moveSmooth(0, px -0.2f, py + 11.5f , 5.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+                g_arm.moveSmooth(0, px -0.2f, py + 9.5f , 4.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+                g_arm.moveSmooth(0, px -0.2f, py + 9.5f , 2.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(500000);
                 g_arm.setServoAngle(0, 6, Arm0_open); usleep(800000); // 组装压实后，松开爪子
 
                 g_arm.setServoAngle(1, 15, Arm1_open); usleep(600000);
@@ -957,7 +957,7 @@ namespace DemoManager {
             g_arm.moveSmooth(1, -10, 0 ,8, -0.1, 0, -1, -1, 0, 0);usleep(1200000);
             std::vector<float> target_ch = {145.0f + 18.0f, 80.0f + 18.0f, 1.0f + 18.0f, 70.0f + 18.0f,  120.0f + 18.0f,  70.0f - 55.0f };
             g_arm.moveRawChannelsSmooth(1, target_ch, 1.5f); usleep(1500000); // 等待移动完成
-            g_arm.moveSmooth(0, -12.5, -6 , 2.2, -0.1, 0, -1, -1, 0, 0); usleep(2300000); 
+            g_arm.moveSmooth(0, -11.8, -6 , 2.2, -0.1, 0, -1, -1, 0, 0); usleep(2300000); 
             g_arm.setServoAngle(0, 6, Arm0_close); usleep(1000000); 
             g_arm.setServoAngle(1, 15, 50); usleep(1000000);
             g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1000000);
@@ -968,8 +968,8 @@ namespace DemoManager {
 
             //拼ID=2物体
             g_arm.moveSmooth(0, -17, 5 , 6, -0.2, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, -17, 2 , 6, -0.2, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, -17, 2 , 2, -0.2, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(500000);
+            g_arm.moveSmooth(0, -17, 3 , 6, -0.2, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.moveSmooth(0, -17, 3 , 2, -0.2, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1000000);
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(800000); // 组装压实后，松开爪子
 
             g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1000000);// 抬升并回归待命姿态
@@ -978,42 +978,10 @@ namespace DemoManager {
     void executeDo003() {
         std::thread([]() {    
 
-            float f_zx = -0.37f, f_zy = 0.0f, f_zz = -1.0f;
-            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+            g_arm.setServoAngle(0, 6, Arm0_open);
+            g_arm.setServoAngle(1, 15, Arm1_open);usleep(800000);
 
-            std::cout << "\n>>> [DEMO091] ARM0 移动至组装目标 <<<" << std::endl;
-            g_arm.moveSmooth(0, -23, 0 , 3, -0.42, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, -23, 0 , 0, -0.42, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.setServoAngle(0, 6, Arm0_open); usleep(800000);
-            g_arm.moveSmooth(0, -23, 0 , 3, -0.42, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1200000);
-
-            //换手
-            g_arm.moveSmooth(1, -10, 0 ,8, -0.1, 0, -1, -1, 0, 0);usleep(1200000);
-            std::vector<float> target_ch = {145.0f + 18.0f, 80.0f + 18.0f, 1.0f + 18.0f, 70.0f + 18.0f,  120.0f + 18.0f,  70.0f - 55.0f };
-            g_arm.moveRawChannelsSmooth(1, target_ch, 1.5f); usleep(1500000); // 等待移动完成
-            g_arm.moveSmooth(0, -12.5, -6 , 2.2, -0.1, 0, -1, -1, 0, 0); usleep(2300000); 
-            g_arm.setServoAngle(0, 6, Arm0_close); usleep(1000000); 
-            g_arm.setServoAngle(1, 15, 50); usleep(1000000);
-            g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1000000);
-            g_arm.setServoAngle(1, 15, Arm1_close); usleep(1000000);
-            g_arm.moveSmooth(1, -10, 0 , 5, -0.1, 0, -1, -1, 0, 0);  usleep(2000000); 
-            g_arm.moveSmooth(1, -13, -10 , 9, -0.1, 0, -1, -1, 0, 0);  usleep(200000); 
-            g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0);  usleep(1200000); 
-
-            g_arm.moveSmooth(1, -18, 0 , 9, -0.25, 0, -1, -1, 0, 0);  usleep(2000000); 
-            g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
-            g_arm.moveSmooth(1, -18, 0 , 6, -0.25, 0, -1, -1, 0, 0);  usleep(1000000); 
-            g_arm.setServoAngle(1, 15, Arm1_close); usleep(1000000);
-            //拼ID=3物体
-            g_arm.moveSmooth(0, -20, -4 , 9, -0.42, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, -20, -4 , 6, -0.42, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1000000);
-            g_arm.setServoAngle(0, 6, Arm0_open); usleep(800000); // 组装压实后，松开爪子
-            g_arm.setServoAngle(1, 15, Arm1_open); usleep(8000000);
-            g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1000000);// 抬升并回归待命姿态
-            g_arm.moveSmooth(1, -18, 0 , 9, -0.25, 0, -1, -1, 0, 0);  usleep(2000000); 
-            g_arm.moveSmooth(1, -13, -10 , 8, -0.1, 0, -1, -1, 0, 0);  usleep(1000000); 
-
+           
         }).detach();
     }
     //拼装动作（底）

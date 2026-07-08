@@ -420,11 +420,12 @@ void processTextCommand(const std::string& cmd_line) {
 
 
             // 第7步：运行demo091 (虚拟框ID=9的坐标提取，并由底座缓存坐标)
-            do_vision_demo(0, 9, 1, "DEMO091", 20000); 
+            //do_vision_demo(0, 9, 1, "DEMO091", 20000); 
             // 第8步：运行do031 (交接 + ARM0提取091记忆坐标)
-            send_serial_cmd("DO031", 25000); 
             // 9 :
-            send_serial_cmd("MS 30", 2000) ;
+            send_serial_cmd("DO003 ", 2000) ;
+            send_serial_cmd("MS 30 ", 1000) ;
+            send_serial_cmd("DEMO", 1000); 
 
             std::cout << ">>> 动作链结束！" << std::endl;
         }).detach(); 
@@ -1453,7 +1454,7 @@ private:
                             if (pts.size() > 40) pts.resize(40);
                             int n = pts.size();
 
-                            // 1. 寻找纵轴 (最下方且 X 方差小)
+                            // 1. 寻找纵轴 (粗略定位右侧竖线)
                             auto eval_v_subset = [&](const std::vector<Point2f>& sub) {
                                 float min_x = 1e9, max_x = -1e9, sum_x = 0;
                                 for(auto p : sub) { if(p.x < min_x) min_x = p.x; if(p.x > max_x) max_x = p.x; sum_x += p.x; }
@@ -1471,7 +1472,7 @@ private:
                                 }
                             }
 
-                            // 2. 剔除纵轴点，在剩余点中找横轴 (最左方且 Y 方差小)
+                            // 2. 剔除纵轴点，在剩余点中寻找横轴
                             std::vector<Point2f> rem_pts;
                             for(auto p : pts) {
                                 bool in_v = false;
@@ -1500,29 +1501,60 @@ private:
                                 std::sort(best_v.begin(), best_v.end(), [](Point2f a, Point2f b){ return a.y < b.y; }); // 上到下
                                 std::sort(best_h.begin(), best_h.end(), [](Point2f a, Point2f b){ return a.x < b.x; }); // 左到右
 
-                                Point2f p4_pix = best_v.back();  // 纵轴最底端 (4号点)
-                                Point2f p1_pix = best_h.front(); // 横轴最左端 (1号点)
+                                // ==========================================================
+                                // 【核心修正】：锁定竖线后，强行提取物理最底端的四棱台作为 4号点
+                                // ==========================================================
+                                float avg_v_x = 0;
+                                for (auto p : best_v) avg_v_x += p.x;
+                                avg_v_x /= best_v.size();
 
+                                Point2f p4_pix = best_v.back(); // 兜底
+                                float max_y = -1e9;
+                                for (auto p : pts) {
+                                    // 放宽容差至 30 像素，只要属于这根竖线，就找出绝对最下面的！
+                                    if (abs(p.x - avg_v_x) < 60.0f) {
+                                        if (p.y > max_y) {
+                                            max_y = p.y;
+                                            p4_pix = p; // 死锁真正的 4 号点
+                                        }
+                                    }
+                                }
+
+                                Point2f p1_pix = best_h.front(); // 横轴最左端 (1号点)
                                 if (best_h.size() == 2) {
                                     p1_pix = best_h[0] - (best_h[1] - best_h[0]);
                                     cout << ">>> [降维预警] 横轴 1号点缺失，已利用等距向量反推补齐！" << endl;
+                                } else {
+                                    // 同理，为横轴死锁最左端的四棱台作为真正的 1号点
+                                    float avg_h_y = 0;
+                                    for (auto p : best_h) avg_h_y += p.y;
+                                    avg_h_y /= best_h.size();
+                                    
+                                    float min_x = 1e9;
+                                    for (auto p : pts) {
+                                        if (abs(p.y - avg_h_y) < 30.0f) {
+                                            if (p.x < min_x) {
+                                                min_x = p.x;
+                                                p1_pix = p; // 死锁真正的 1 号点
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // 3. 生成虚拟紧凑框并执行四向膨胀
                                 // 原点 P1为左上，P4为右下。要求：上移20，左移60，下移40，右不变。
                                 int new_x = p1_pix.x - 60;
                                 int new_y = p1_pix.y - 20;
-                                int new_w = (p4_pix.x - p1_pix.x) + 60;      // 左侧移了60，右侧不变，故宽增加60
-                                int new_h = (p4_pix.y - p1_pix.y) + 20 + 40; // 上移20下移40，故高增加60
+                                int new_w = (p4_pix.x - p1_pix.x) + 60;      
+                                int new_h = (p4_pix.y - p1_pix.y) + 20 + 40; 
 
-                                // 直接覆盖掉原始的巨大假框，让它化身为一个精准的局部先验框！
                                 obj.bbox = Rect(new_x, new_y, new_w, new_h);
-                                cout << ">>> [无缝接入] ID=9 已成功膨胀虚拟边界框，准备送入底层二值化 PnP..." << endl;
+                                cout << ">>> [极值锁定] ID=9 已死锁最底端四棱台为4号点，准备送入底层二值化 PnP..." << endl;
                             } else {
-                                obj.bbox = Rect(0,0,0,0); // 未能提取出合理骨架，置空使其安全跳过本帧
+                                obj.bbox = Rect(0,0,0,0);
                             }
                         } else if (obj.class_id == 9) {
-                            obj.bbox = Rect(0,0,0,0); // 点数不足，置空安全跳过
+                            obj.bbox = Rect(0,0,0,0);
                         }
                         // -------------------------------------------------------------
                     }
@@ -1794,7 +1826,7 @@ public:
 
             int pip_offset_y = 10;
             for (const auto& obj : current_yolo_res.objects) {
-                if (!obj.roi_mask.empty()) {
+                if (!obj.roi_mask.empty() && obj.class_id != 9 ) {
                     Mat mask_bgr; cvtColor(obj.roi_mask, mask_bgr, COLOR_GRAY2BGR);
                     Rect pip_rect(10, pip_offset_y, mask_bgr.cols, mask_bgr.rows); pip_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
                     if(pip_rect.area() > 0) {
@@ -1830,45 +1862,45 @@ int main() {
     VisionEngine engine(pilot_comm);
     const vector<int> encode_params = {IMWRITE_JPEG_QUALITY, SystemConfig::JPEG_QUALITY};
 
-    // 为 HTTP 客户端定义局部 socket (原代码逻辑)
+    // 为 HTTP 客户端定义局部 socket
     int client_socket = -1;
 
+    // 【核心修复】：去掉双层循环，拍平成单层！
+    // 让程序在处理每一帧画面的同时，顺手非阻塞探测浏览器的连接。
     while (true) {
-        // HTTP 依然保留非阻塞接受逻辑，防止没开网页时卡死
-        if (client_socket < 0) {
-            // 【修复】：使用封装好的非阻塞方法，而不是原生的 accept
-            client_socket = stream_server.acceptClient(); 
-        }
-
         Mat raw_frame;
         vector<uchar> buffer;
         buffer.reserve(128 * 1024);
 
-        while (true) {
-            if (!CameraManager::getLatestFrame(shared_frame, raw_frame, 50)) continue;
+        // [流水线步骤 1] 抓取最新帧 (如果没抓到就等下一帧)
+        if (!CameraManager::getLatestFrame(shared_frame, raw_frame, 50)) continue;
 
-            DemoTask current_task = TaskManager::fetchTask();
-            engine.processAutoCamera(raw_frame);
-            if (current_task.pending) {
-                engine.processTask(current_task, raw_frame); 
-            }
-            engine.processArucoFix(raw_frame);
-            engine.renderOsd(raw_frame);
+        // [流水线步骤 2] 非阻塞探测浏览器连接 (如果没人连，瞬间放行，绝不卡顿)
+        if (client_socket < 0) {
+            client_socket = stream_server.acceptClient(); 
+        }
 
-            // =======================================================
-            // 【核心注入】：将画面喂给 PC 二进制高速图传
-            // =======================================================
-            pc_server.sendVideo(raw_frame);
+        // [流水线步骤 3] 获取任务并执行视觉伺服、检测、画 OSD 等
+        DemoTask current_task = TaskManager::fetchTask();
+        engine.processAutoCamera(raw_frame);
+        if (current_task.pending) {
+            engine.processTask(current_task, raw_frame); 
+        }
+        engine.processArucoFix(raw_frame);
+        engine.renderOsd(raw_frame);
 
-            // 原有的 HTTP 推流逻辑
-            if (client_socket >= 0) {
-                if (!stream_server.sendFrame(client_socket, raw_frame, buffer, encode_params)) {
-                    close(client_socket);
-                    client_socket = -1; // 客户端断开，退回外层重新 accept
-                    break;
-                }
+        // [流水线步骤 4] 将画面喂给 PC 二进制高速图传 (8001端口)
+        pc_server.sendVideo(raw_frame);
+
+        // [流水线步骤 5] 传统的 HTTP 网页推流 (8080端口)
+        if (client_socket >= 0) {
+            // 如果发送失败 (比如你关掉了浏览器网页)
+            if (!stream_server.sendFrame(client_socket, raw_frame, buffer, encode_params)) {
+                close(client_socket);
+                client_socket = -1; // 标记断开，下一帧自动重新探测新连接
             }
         }
     }
+    
     return 0;
 }
