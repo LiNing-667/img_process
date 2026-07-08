@@ -1,6 +1,6 @@
 /**
  * @file monitor.cpp
- * @brief 视觉监测上位机 (Brain Node) - 终极修复与面向对象重构版
+ * @brief 视觉监测上位机 (Brain Node) 
  */
 
 #include <opencv2/opencv.hpp>
@@ -347,7 +347,7 @@ void processTextCommand(const std::string& cmd_line) {
     if (lower_cmd == "start") {
         std::thread([]() {
             std::cout << "\n=============================================" << std::endl;
-            std::cout << ">>> 全自动装配宏动作链 [START] 启动！" << std::endl;
+            std::cout << ">>> 全自动装配宏动作链启动" << std::endl;
             std::cout << "=============================================\n" << std::endl;
 
             auto send_serial_cmd = [](const std::string& cmd, int wait_ms) {
@@ -385,47 +385,39 @@ void processTextCommand(const std::string& cmd_line) {
                 usleep(wait_ms * 1000); 
             };
 
-                            // =======================================================
-                // 动作链正式开始编排 (时间单位为毫秒 ms)
-                // =======================================================
-
+            // =======================================================
+            // 动作链正式开始编排 (时间单位为毫秒 ms)
+            // =======================================================
             //  send_serial_cmd("DEMO", 5000); 
-            //  // 第1步：小车移动。
+            //  // 第1步：小车移动
             //  send_serial_cmd("MW 35", 3000);  
             //  send_serial_cmd("MQ", 3500);  
             //  send_serial_cmd("MW 40", 2000);  
             //  send_serial_cmd("MQ", 3500); 
-            //  send_serial_cmd("CH 8 20", 3000);
+            //  send_serial_cmd("Find", 3000);
             //  send_serial_cmd("MW 12", 2000);
-
-            //  // 第2步：运行nod指令。
+            //  // 第2步：运行nod指令
             //  do_nod();
             //  usleep(500000); // 停顿 0.5 秒让云台稳定
-
             //  // 第3步：运行demo131 
             //  do_vision_demo(1, 3, 1, "DEMO131", 25000); 
-
             //  // 第4步：运行两三个小车移动指令。
             //  send_serial_cmd("MS 18", 2000); 
             //  send_serial_cmd("ME", 4000);
             //  send_serial_cmd("MW 22", 2000);  
-
             //  // 第5步：运行demo000 (寻找底座ID=0测试定位)
             //  do_vision_demo(0, 0, 0, "DEMO000", 20000); 
-
-            //  // 第6步：运行两三个小车移动指令。
+            //  // 第6步：
             //  send_serial_cmd("MS 40", 3000); 
             //  send_serial_cmd("ME ", 4000);   
             //  send_serial_cmd("MW 20", 3000); 
-
-
-            // 第7步：运行demo091 (虚拟框ID=9的坐标提取，并由底座缓存坐标)
+            // 第7步：
             //do_vision_demo(0, 9, 1, "DEMO091", 20000); 
-            // 第8步：运行do031 (交接 + ARM0提取091记忆坐标)
-            // 9 :
-            send_serial_cmd("DO003 ", 2000) ;
-            send_serial_cmd("MS 30 ", 1000) ;
-            send_serial_cmd("DEMO", 1000); 
+            // 第8步：
+            //send_serial_cmd("DO003 ", 2000) ;
+            //send_serial_cmd("MS 30 ", 1000) ;
+            //send_serial_cmd("DEMO", 1000); 
+            //...
 
             std::cout << ">>> 动作链结束！" << std::endl;
         }).detach(); 
@@ -566,16 +558,15 @@ namespace CameraManager {
         bool error_reported = false; // 增加标志位，掉线只报一次错
 
         while (true) {
-            // 加入 cap->isOpened() 判断，防止未初始化时崩溃
             if (!cap->isOpened() || !cap->read(temp) || temp.empty()) { 
                 fail_count++;
                 if (fail_count > 30) { 
                     if (!error_reported) {
                         std::cerr << "\n[Camera Watchdog] 摄像头连接断开！已进入后台静默重连，不打扰其他模块调试..." << std::endl;
-                        error_reported = true; // 锁定报错，不再刷屏
+                        error_reported = true; 
                     }
                     cap->release(); 
-                    usleep(20000000); // 延长重连间隔为 20 秒一次，极大地降低 CPU 占用
+                    usleep(20000000); 
 
                     for (int dev_id = 0; dev_id < 4; ++dev_id) {
                         forceCameraFormat(dev_id, true); // true 代表静默探测
@@ -638,7 +629,7 @@ namespace CameraManager {
             sleep(1); 
         }
         
-        // 去掉 exit(-1) 强制退出，改为警告并放行，支持完全无头启动
+        // 支持无头启动
         if (!camera_opened) { 
             cerr << "\n[Monitor] 警告：系统初始化时未检测到摄像头！\n>>> 已进入无摄像头调试模式，后续插上摄像头将自动热插拔重连..." << endl; 
         } else {
@@ -672,7 +663,7 @@ public:
         server_fd = socket(AF_INET, SOCK_STREAM, 0);
         int opt = 1; setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         
-        // 【核心修复】：必须将 server_fd 设置为非阻塞模式！
+        // 必须将 server_fd 设置为非阻塞模式
         // 否则主循环的 accept() 会把整个图像处理和图传线程彻底卡死
         int flags = fcntl(server_fd, F_GETFL, 0);
         fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
@@ -739,7 +730,7 @@ private:
         while (true) {
             int client = accept(video_server_fd, nullptr, nullptr);
             if (client >= 0) {
-                // 【修复】：自动挤掉并释放旧连接，防止上位机断线重连导致 fd 泄漏
+                // 自动挤掉并释放旧连接，防止上位机断线重连导致 fd 泄漏
                 int old_sock = video_sock.exchange(client);
                 if (old_sock >= 0) close(old_sock);
                 std::cout << ">>> [PC协议] 图传链路已连接! 开始高速推流 <<<" << std::endl;
@@ -762,10 +753,7 @@ private:
                 buf.erase(buf.begin(), buf.begin() + consumed);
 
                 // ==========================================================
-                // 【核心指令路由】：对接 Monitor 原有系统
-                // ==========================================================
-                // ==========================================================
-                // 【核心指令路由】：对接 Monitor 原有系统
+                // 对接 Monitor 原有系统
                 // ==========================================================
                 switch (f.cmd) {
                     case protocol::CMD_HEARTBEAT: {
@@ -803,7 +791,7 @@ private:
                         send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
                         break;
                     }
-                    // 【新增】：急停指令
+                    // 急停指令
                     case protocol::CMD_EMERGENCY: {
                         std::cout << "\n[PC指令] !!! 收到 EMERGENCY 急停指令 !!!" << std::endl;
                         if (g_serial_fd >= 0) {
@@ -815,7 +803,7 @@ private:
                         break;
                     }
 
-                    // 【修改】：文本指令路由打通
+                    // 文本指令路由打通
                     case protocol::CMD_TEXT: {
                         std::string text((const char*)f.payload, f.plen);
                         // 清理上位机可能不小心发送过来的换行符
@@ -824,7 +812,7 @@ private:
                         
                         std::cout << "\n[PC指令] 收到文本命令: " << text << std::endl;
                         
-                        // 【核心打通】：将上位机发来的文本交给中央网关解析
+                        // 将上位机发来的文本交给中央网关解析
                         processTextCommand(text); 
                         
                         auto resp = protocol::build_resp_ok();
@@ -1071,12 +1059,12 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
     // 将原始的掩码保存给外部显示
     out_mask = mask.clone();
     
-    // 1. 用一个较大的核进行开运算，强制“吃掉”左右两侧较薄的凸起矩形
+    // 用一个较大的核进行开运算，吃掉左右两侧较薄的凸起矩形
     Mat body_mask;
     Mat strong_open_kernel = getStructuringElement(MORPH_RECT, Size(15, 15)); 
     morphologyEx(mask, body_mask, MORPH_OPEN, strong_open_kernel);
 
-    // 2. 获取纯净的中间主矩形轮廓
+    // 获取纯净的中间主矩形轮廓
     vector<vector<Point>> body_contours;
     findContours(body_mask, body_contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
     if (body_contours.empty()) return false;
@@ -1088,7 +1076,7 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
     }
     if (max_area < roi_frame.cols * roi_frame.rows * 0.05) return false;
 
-    // 3. 计算中间主矩形的精确位姿 (提取真实的绝对高度和旋转角度)
+    // 计算中间主矩形的精确位姿 (提取真实的绝对高度和旋转角度)
     RotatedRect body_rect = minAreaRect(best_body);
     Point2f bp[4];
     body_rect.points(bp);
@@ -1109,7 +1097,7 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
         true_height = len01;
     }
 
-    // 4. 将原始完整 mask(包含侧边凸起) 的所有点，降维投影到长轴上
+    // 将原始完整 mask(包含侧边凸起) 的所有点，降维投影到长轴上
     vector<Point> all_pts;
     findNonZero(mask, all_pts);
     if (all_pts.empty()) return false;
@@ -1123,7 +1111,7 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
         if (proj > max_proj) max_proj = proj;
     }
 
-    // 5. 虚拟重构：利用 真实宽度 + 真实高度 凭空组装出完美的 4 个角点
+    // 虚拟重构：利用 真实宽度 + 真实高度 凭空组装出完美的 4 个角点
     float true_length = max_proj - min_proj;
     float center_shift = (max_proj + min_proj) / 2.0f;
     Point2f true_center = body_rect.center + v_long * center_shift;
@@ -1137,7 +1125,7 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
     corners.push_back(true_center - half_long - half_short);
     corners.push_back(true_center - half_long + half_short);
 
-    // 6. 将生成的理想点顺时针排序 (TL, TR, BR, BL)
+    // 将生成的理想点顺时针排序 (TL, TR, BR, BL)
     std::vector<Point2f> top, bot;
     std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b){ return a.y < b.y; });
     top.push_back(corners[0]); top.push_back(corners[1]); 
@@ -1331,18 +1319,14 @@ private:
                         obj.sub_centers = clusterPoints(global_raw, 12.0f); 
                         cout << ">>> [二次级联] ID=" << obj.class_id << " 区域内原始 " << raw_centers.size() << " 个候选点，聚类出 " << obj.sub_centers.size() << " 个四棱台特征。" << endl;
 
-                        // 注意：只有 ID=0 才去做透视矩阵的角点修复
-                        // 注意：只有 ID=0 才去做透视矩阵的角点修复
+                        // 只有 ID=0 才去做透视矩阵的角点修复
                         if (obj.class_id == 0 && obj.sub_centers.size() >= 4) {
                             bool perspective_fixed = false;
                             
-                            // ==============================================================
-                            // 把 ID=0 框切成两半，只取右半边
-                            // ==============================================================
                             std::vector<Point2f> pts;
                             float mid_x = obj.bbox.x + obj.bbox.width / 2.0f; // 获取 YOLO 框的正中心 X 坐标
                             for (auto p : obj.sub_centers) {
-                                // 严格执行：只看右半面的点，左半边的杂点瞬间物理湮灭！
+                                // 只看右半面的点
                                 if (p.x > mid_x) {
                                     pts.push_back(p);
                                 }
@@ -1351,12 +1335,12 @@ private:
                             if (pts.size() > 40) pts.resize(40);
                             int n = pts.size();
 
-                            // 只要右半边剩下的点足够构成一条竖线，就直接开干！
+                            // 只要右半边剩下的点足够构成一条竖线
                             if (n >= 4) {
                                 std::vector<Point2f> best_v;
                                 float min_x_span = 1e9;
                                 
-                                // 1. 大道至简：暴力穷举找 X 跨度最小的 4 个点 (锁定最右侧竖线)
+                                // 穷举找 X 跨度最小的 4 个点 (锁定最右侧竖线)
                                 for(int i=0; i<n; i++) {
                                     for(int j=i+1; j<n; j++) {
                                         for(int k=j+1; k<n; k++) {
@@ -1390,37 +1374,28 @@ private:
                                         if (!in_v) rem_pts.push_back(p);
                                     }
 
-                                    // 2. 在极其纯净的右半区，使用“物理距离”死锁最近的两个点！
                                     std::vector<Point2f> bot_line, top_line;
                                     for (auto p : rem_pts) {
                                         if (abs(p.y - P4.y) < 45.0f && p.x < P4.x - 5.0f) bot_line.push_back(p);
                                         if (abs(p.y - P7.y) < 45.0f && p.x < P7.x - 5.0f) top_line.push_back(p);
                                     }
 
-                                    // 必须往左至少有两个点 (即存在 3和2, 8和9)
                                     if (bot_line.size() >= 2 && top_line.size() >= 2) {
                                         // 按照物理直线距离从小到大排序
                                         std::sort(bot_line.begin(), bot_line.end(), [P4](Point2f a, Point2f b){ return norm(a - P4) < norm(b - P4); });
                                         std::sort(top_line.begin(), top_line.end(), [P7](Point2f a, Point2f b){ return norm(a - P7) < norm(b - P7); });
-                                        
-                                        // 由于左侧脏点已被全歼，第 0 个必是 3/8 号，第 1 个绝对就是 2/9 号！
+
                                         Point2f P2 = bot_line[1]; 
                                         Point2f P9 = top_line[1]; 
-
-                                        // 物理上 4到2 是底边全宽的 2/3，直接外推 1.5 倍补全
                                         Point2f P1 = P4 + 1.5f * (P2 - P4);
                                         Point2f P10 = P7 + 1.5f * (P9 - P7);
-
                                         obj.corners_2d = {P10, P7, P4, P1};
                                         perspective_fixed = true;
-                                        cout << ">>> [右半区绝对隔离] 成功抹杀左半边噪点，完美定位右侧骨架及 2/9 号点！" << endl;
+                                        cout << ">>> 定位右侧骨架" << endl;
                                     }
                                 }
                             }
-
-                            // ==============================================================
-                            // 3. 万能兜底逻辑（没遮挡或提取失败时执行）
-                            // ==============================================================
+                            // 兜底逻辑（没遮挡或提取失败时执行）
                             if (!perspective_fixed) {
                                 RotatedRect min_rect = minAreaRect(obj.sub_centers); 
                                 Point2f rect_pts[4]; min_rect.points(rect_pts);
@@ -1443,9 +1418,7 @@ private:
                             }
                         }
                 
-                        // -------------------------------------------------------------
-                        // 【核心重构】：利用 1号和 4号点构造并膨胀出“虚拟 YOLO 框”
-                        // -------------------------------------------------------------
+                        // 利用 1号和 4号点构造并膨胀出“虚拟 YOLO 框”
                         if (obj.class_id == 9 && obj.sub_centers.size() >= 4) {
                             std::vector<Point2f> pts = obj.sub_centers;
                             std::vector<Point2f> best_v, best_h;
@@ -1454,7 +1427,7 @@ private:
                             if (pts.size() > 40) pts.resize(40);
                             int n = pts.size();
 
-                            // 1. 寻找纵轴 (粗略定位右侧竖线)
+                            // 寻找纵轴 (粗略定位右侧竖线)
                             auto eval_v_subset = [&](const std::vector<Point2f>& sub) {
                                 float min_x = 1e9, max_x = -1e9, sum_x = 0;
                                 for(auto p : sub) { if(p.x < min_x) min_x = p.x; if(p.x > max_x) max_x = p.x; sum_x += p.x; }
@@ -1472,7 +1445,7 @@ private:
                                 }
                             }
 
-                            // 2. 剔除纵轴点，在剩余点中寻找横轴
+                            // 剔除纵轴点，在剩余点中寻找横轴
                             std::vector<Point2f> rem_pts;
                             for(auto p : pts) {
                                 bool in_v = false;
@@ -1501,9 +1474,7 @@ private:
                                 std::sort(best_v.begin(), best_v.end(), [](Point2f a, Point2f b){ return a.y < b.y; }); // 上到下
                                 std::sort(best_h.begin(), best_h.end(), [](Point2f a, Point2f b){ return a.x < b.x; }); // 左到右
 
-                                // ==========================================================
-                                // 【核心修正】：锁定竖线后，强行提取物理最底端的四棱台作为 4号点
-                                // ==========================================================
+                                // 锁定竖线后，提取物理最底端的四棱台作为 4号点
                                 float avg_v_x = 0;
                                 for (auto p : best_v) avg_v_x += p.x;
                                 avg_v_x /= best_v.size();
@@ -1511,11 +1482,11 @@ private:
                                 Point2f p4_pix = best_v.back(); // 兜底
                                 float max_y = -1e9;
                                 for (auto p : pts) {
-                                    // 放宽容差至 30 像素，只要属于这根竖线，就找出绝对最下面的！
+                                    // 放宽容差至 60 像素
                                     if (abs(p.x - avg_v_x) < 60.0f) {
                                         if (p.y > max_y) {
                                             max_y = p.y;
-                                            p4_pix = p; // 死锁真正的 4 号点
+                                            p4_pix = p; 
                                         }
                                     }
                                 }
@@ -1523,9 +1494,8 @@ private:
                                 Point2f p1_pix = best_h.front(); // 横轴最左端 (1号点)
                                 if (best_h.size() == 2) {
                                     p1_pix = best_h[0] - (best_h[1] - best_h[0]);
-                                    cout << ">>> [降维预警] 横轴 1号点缺失，已利用等距向量反推补齐！" << endl;
+                                    cout << ">>> 横轴 1号点缺失 已利用等距向量反推补齐" << endl;
                                 } else {
-                                    // 同理，为横轴死锁最左端的四棱台作为真正的 1号点
                                     float avg_h_y = 0;
                                     for (auto p : best_h) avg_h_y += p.y;
                                     avg_h_y /= best_h.size();
@@ -1535,21 +1505,21 @@ private:
                                         if (abs(p.y - avg_h_y) < 30.0f) {
                                             if (p.x < min_x) {
                                                 min_x = p.x;
-                                                p1_pix = p; // 死锁真正的 1 号点
+                                                p1_pix = p; 
                                             }
                                         }
                                     }
                                 }
 
-                                // 3. 生成虚拟紧凑框并执行四向膨胀
-                                // 原点 P1为左上，P4为右下。要求：上移20，左移60，下移40，右不变。
+                                // 生成虚拟紧凑框并执行四向膨胀
+                                // 原点 P1为左上，P4为右下.上移20，左移60，下移40，右不变
                                 int new_x = p1_pix.x - 60;
                                 int new_y = p1_pix.y - 20;
                                 int new_w = (p4_pix.x - p1_pix.x) + 60;      
                                 int new_h = (p4_pix.y - p1_pix.y) + 20 + 40; 
 
                                 obj.bbox = Rect(new_x, new_y, new_w, new_h);
-                                cout << ">>> [极值锁定] ID=9 已死锁最底端四棱台为4号点，准备送入底层二值化 PnP..." << endl;
+                                cout << ">>> [极值锁定] ID=9 已锁最底端四棱台为4号点 准备送入底层二值化 PnP..." << endl;
                             } else {
                                 obj.bbox = Rect(0,0,0,0);
                             }
@@ -1631,7 +1601,7 @@ public:
    // 核心路由控制器
     void processTask(const DemoTask& task, Mat& raw_frame) {
         
-        // 1. 处理巡航寻找逻辑
+        // 处理巡航寻找逻辑
         if (task.raw_cmd.rfind("FIND_ACK_", 0) == 0) {
             cout << "\n>>> [巡航搜索] 云台已就位，开始扫描 ID=2..." << endl;
             // 构造一个虚拟任务，用 YOLO+PnP 流水线
@@ -1856,7 +1826,7 @@ int main() {
     // 4. HTTP 推流服务器初始化 (供浏览器预览)
     HttpStreamServer stream_server(SystemConfig::HTTP_STREAM_PORT); // 默认 8080
 
-    // 【修改】：使用正确的上位机通信端口 8000 和 8001
+    // 使用正确的上位机通信端口 8000 和 8001
     PcProtocolServer pc_server(8000, 8001);
 
     VisionEngine engine(pilot_comm);
@@ -1865,7 +1835,7 @@ int main() {
     // 为 HTTP 客户端定义局部 socket
     int client_socket = -1;
 
-    // 【核心修复】：去掉双层循环，拍平成单层！
+    // 去掉双层循环，拍平成单层
     // 让程序在处理每一帧画面的同时，顺手非阻塞探测浏览器的连接。
     while (true) {
         Mat raw_frame;
@@ -1894,7 +1864,7 @@ int main() {
 
         // [流水线步骤 5] 传统的 HTTP 网页推流 (8080端口)
         if (client_socket >= 0) {
-            // 如果发送失败 (比如你关掉了浏览器网页)
+            // 如果发送失败 (比如关掉了浏览器网页)
             if (!stream_server.sendFrame(client_socket, raw_frame, buffer, encode_params)) {
                 close(client_socket);
                 client_socket = -1; // 标记断开，下一帧自动重新探测新连接

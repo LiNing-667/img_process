@@ -24,7 +24,7 @@
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 
-// 逆运动学算法库 (请确保同目录下有该头文件)
+// 逆运动学算法库 
 #include "ik_solver.h"
 
 
@@ -92,7 +92,7 @@ private:
     ArmState states_[2]; 
     std::atomic<int> cmd_version_{0}; 
 
-    // 【新增】：为虚拟的 ARM2 (摄像头云台) 增加独立的记忆与防抖锁
+    // 为ARM2 (摄像头云台) 增加独立的记忆与防抖锁
     std::atomic<float> curr_pan_{40.0f};  // CH7 默认 40度直视
     std::atomic<float> curr_tilt_{43.0f}; // CH8 默认 43度俯视车板
     std::atomic<int> cam_cmd_version_{0};
@@ -216,7 +216,7 @@ public:
     ArmState& getState(int arm_id) { return states_[arm_id]; }
 
     // ==========================================================
-    // 【新增】：纯物理通道多轴同步平滑插值 (绕过 IK，专治交接扭曲姿态)
+    // 纯物理通道多轴同步平滑插值 (绕过 IK，专治交接扭曲姿态)
     // ==========================================================
     void moveRawChannelsSmooth(int arm_id, const std::vector<float>& target_raw_angles, float time_sec = 2.0f) {
         int my_version = ++cmd_version_;
@@ -280,7 +280,7 @@ public:
         }).detach();
     }
     // ==========================================================
-    // 【新增】虚拟 ARM2 (云台) 专属多线程平滑控制
+    //  ARM2 (云台) 专属多线程平滑控制
     // ==========================================================
     void moveCameraSmooth(float target_pan, float target_tilt) {
         int my_version = ++cam_cmd_version_;
@@ -317,7 +317,7 @@ public:
         }).detach();
     }
 
-    // 【新增】云台瞬间指向直控 (供 Monitor PID 自适应调用)
+    // 云台瞬间指向直控 (供 Monitor PID 自适应调用)
     void setCameraDirect(float target_pan, float target_tilt) {
         cam_cmd_version_++; // 发出打断信号，终止可能正在进行的平滑移动
         setServoAngle(1, 7, target_pan);
@@ -337,7 +337,7 @@ public:
 RoboticArmController g_arm(SystemConfig::PCA_ADDR_ARM0);
 
 // ============================================================================
-// [3.5] 麦轮底盘全向闭环控制核心 (待完善)
+// [3.5] 麦轮底盘全向闭环控制核心 
 // ============================================================================
 class ChassisController {
 private:
@@ -938,7 +938,7 @@ namespace DemoManager {
         }).detach();
     }
 
-    //临时
+    //临时调试用
     void executeDo002() {
         std::thread([]() {    
 
@@ -1094,7 +1094,7 @@ namespace DemoManager {
             std::cout << "\n>>> [巡航搜索] 调整云台视角 2 (DEMO221: Pan 43, Tilt 30) <<<" << std::endl;
             g_arm.moveCameraSmooth(43.0f, 20.0f);
             usleep(2000000); // 预留 1 秒钟
-            sendToMonitor("FIND_ACK_221\r\n"); // 动作完成，向上位机汇报！
+            sendToMonitor("FIND_ACK_221\r\n"); // 动作完成，向上位机汇报
         }).detach();
     }
 }
@@ -1139,7 +1139,7 @@ private:
         }
 
         // ==========================================
-        // 【新增】：云台专属动作指令
+        // 云台专属动作指令
         // ==========================================
         if (strcmp(cmd, "ARM2") == 0) {
             std::cout << "\n>>> [Pilot] 接收云台平滑移动指令 (ARM2) | Pan=" << px << " Tilt=" << py << std::endl;
