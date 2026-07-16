@@ -63,8 +63,8 @@ std::atomic<bool> g_trigger_aruco_fix{false};
 cv::Point2f g_fixed_aruco_center(-1.0f, -1.0f); 
 
 std::atomic<bool> g_auto_cam_running{false};
-float g_cam_pan = 40.0f;  
-float g_cam_tilt = 40.0f; 
+float g_cam_pan = 113.0f;  
+float g_cam_tilt = 50.0f; 
 
 // 工作流同步信号
 std::atomic<bool> g_wf_chassis_done{false}; // 标志小车是否到达
@@ -76,7 +76,7 @@ namespace SystemConfig {
     const char* SERIAL_PORT       = "/dev/ttyS1";  
     const int   CAM_WIDTH         = 1280;
     const int   CAM_HEIGHT        = 720;
-    const int   CAM_FPS           = 15;
+    const int   CAM_FPS           = 8;
     const int   JPEG_QUALITY      = 50;  
     const int   HTTP_STREAM_PORT  = 8080;  
     const float CONF_THRESH_TARGET= 0.4f;          
@@ -90,7 +90,8 @@ struct ObjectMeta {
     float confidence;   
     bool has_refined_center; 
     Point2f refined_center;  
-    Mat roi_mask;            
+    Mat roi_mask;        
+    Mat ai_mask;        // 【新增】：用于存放神经网络生成的纯净像素级掩码    
     std::vector<Point2f> corners_2d; 
     double tx, ty, tz; 
     double rx, ry, rz;
@@ -174,6 +175,7 @@ std::vector<Point3f> get3DModelPoints(int class_id) {
 
 const Mat CAMERA_MATRIX = (Mat_<double>(3, 3) << 996.7979, 0, 594.9983, 0, 997.4737, 381.4251, 0, 0, 1.0);
 const Mat DIST_COEFFS = (Mat_<double>(5, 1) << -0.1852, -0.2471, 0.0, 0.0, 0.0);
+
 
 std::vector<Point2f> clusterPoints(const std::vector<Point2f>& raw_pts, float dist_thresh = 10.0f) {
     std::vector<Point2f> clusters;
@@ -326,7 +328,7 @@ void processTextCommand(const std::string& cmd_line) {
     }
     if (lower_cmd == "nod") {
         g_auto_cam_running = true;
-        g_cam_pan = 37.0f; g_cam_tilt = 38.0f;
+        g_cam_pan = 113.0f; g_cam_tilt = 50.0f;
         if (g_serial_fd >= 0) {
             char buf[64];
             sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
@@ -362,7 +364,7 @@ void processTextCommand(const std::string& cmd_line) {
             auto do_nod = []() {
                 std::cout << ">>> [动作链] 触发云台视觉调平 (Nod)..." << std::endl;
                 g_auto_cam_running = true;
-                g_cam_pan = 37.0f; g_cam_tilt = 38.0f;
+                g_cam_pan = 113.0f; g_cam_tilt = 50.0f;
                 if (g_serial_fd >= 0) {
                     char buf[64]; sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
                     write(g_serial_fd, buf, strlen(buf));
@@ -385,39 +387,39 @@ void processTextCommand(const std::string& cmd_line) {
                 usleep(wait_ms * 1000); 
             };
 
-            // =======================================================
-            // 动作链正式开始编排 (时间单位为毫秒 ms)
-            // =======================================================
-            //  send_serial_cmd("DEMO", 5000); 
-            //  // 第1步：小车移动
-            //  send_serial_cmd("MW 35", 3000);  
-            //  send_serial_cmd("MQ", 3500);  
-            //  send_serial_cmd("MW 40", 2000);  
-            //  send_serial_cmd("MQ", 3500); 
-            //  send_serial_cmd("Find", 3000);
-            //  send_serial_cmd("MW 12", 2000);
-            //  // 第2步：运行nod指令
-            //  do_nod();
-            //  usleep(500000); // 停顿 0.5 秒让云台稳定
-            //  // 第3步：运行demo131 
-            //  do_vision_demo(1, 3, 1, "DEMO131", 25000); 
-            //  // 第4步：运行两三个小车移动指令。
-            //  send_serial_cmd("MS 18", 2000); 
-            //  send_serial_cmd("ME", 4000);
-            //  send_serial_cmd("MW 22", 2000);  
-            //  // 第5步：运行demo000 (寻找底座ID=0测试定位)
-            //  do_vision_demo(0, 0, 0, "DEMO000", 20000); 
-            //  // 第6步：
-            //  send_serial_cmd("MS 40", 3000); 
-            //  send_serial_cmd("ME ", 4000);   
-            //  send_serial_cmd("MW 20", 3000); 
-            // 第7步：
-            //do_vision_demo(0, 9, 1, "DEMO091", 20000); 
-            // 第8步：
-            //send_serial_cmd("DO003 ", 2000) ;
-            //send_serial_cmd("MS 30 ", 1000) ;
-            //send_serial_cmd("DEMO", 1000); 
-            //...
+            //=======================================================
+            //动作链正式开始编排 (时间单位为毫秒 ms)
+            //=======================================================
+             send_serial_cmd("DEMO", 1000); 
+             // 第1步：小车移动
+             send_serial_cmd("MW 35", 3000);  
+             send_serial_cmd("MQ", 3500);  
+             send_serial_cmd("MW 40", 2000);  
+             send_serial_cmd("MQ", 3500); 
+             send_serial_cmd("Find", 3000);
+             send_serial_cmd("MW 12", 2000);
+             // 第2步：运行nod指令
+             do_nod();
+             usleep(500000); // 停顿 0.5 秒让云台稳定
+             // 第3步：运行demo131 
+             do_vision_demo(1, 3, 1, "DEMO131", 25000); 
+             // 第4步：运行两三个小车移动指令。
+             send_serial_cmd("MS 18", 2000); 
+             send_serial_cmd("ME", 4000);
+             send_serial_cmd("MW 22", 2000);  
+             // 第5步：运行demo000 (寻找底座ID=0测试定位)
+             do_vision_demo(0, 0, 0, "DEMO000", 20000); 
+             // 第6步：
+             send_serial_cmd("MS 40", 3000); 
+             send_serial_cmd("ME ", 4000);   
+             send_serial_cmd("MW 20", 3000); 
+             //第7步：
+             do_vision_demo(0, 9, 1, "DEMO091", 20000); 
+             //第8步：
+             send_serial_cmd("DO003 ", 2000) ;
+             send_serial_cmd("MS 30 ", 1000) ;
+             send_serial_cmd("DEMO", 1000); 
+
 
             std::cout << ">>> 动作链结束！" << std::endl;
         }).detach(); 
@@ -566,7 +568,7 @@ namespace CameraManager {
                         error_reported = true; 
                     }
                     cap->release(); 
-                    usleep(20000000); 
+                    usleep(20000000);
 
                     for (int dev_id = 0; dev_id < 4; ++dev_id) {
                         forceCameraFormat(dev_id, true); // true 代表静默探测
@@ -884,18 +886,108 @@ YoloResult runYoloInference(const Mat& frame, int target_class_id) {
     ncnn::Extractor ex = yolo_ncnn.create_extractor();
     ex.input("in0", in_pad); ncnn::Mat out; ex.extract("out0", out); 
 
+    //int num_channels = out.h, num_anchors = out.w;
+    //float best_score = 0.0f; int best_anchor_idx = -1;
+//
+    //if (target_class_id >= 0 && (target_class_id + 4) < num_channels) {
+    //    int c = target_class_id + 4; 
+    //    float current_thresh = (target_class_id == 1) ? SystemConfig::CONF_THRESH_TARGET : SystemConfig::CONF_THRESH_OTHER; 
+    //    for (int i = 0; i < num_anchors; i++) {
+    //        float score = out.row(c)[i]; 
+    //        if (score > current_thresh && score > best_score) {
+    //            best_score = score; best_anchor_idx = i;
+    //        }
+    //    }
+
     int num_channels = out.h, num_anchors = out.w;
     float best_score = 0.0f; int best_anchor_idx = -1;
 
     if (target_class_id >= 0 && (target_class_id + 4) < num_channels) {
         int c = target_class_id + 4; 
         float current_thresh = (target_class_id == 1) ? SystemConfig::CONF_THRESH_TARGET : SystemConfig::CONF_THRESH_OTHER; 
+        
+        // ==============================================================
+        // 【算力极限压榨版】：NMS 聚类与“最左侧优先”物理位置锁定
+        // ==============================================================
+        struct AnchorData { int idx; float score; Rect bbox; };
+        std::vector<AnchorData> candidates;
+
+        // 收集所有及格的候选框 (单纯的一维数组遍历，几乎不耗时)
         for (int i = 0; i < num_anchors; i++) {
             float score = out.row(c)[i]; 
-            if (score > current_thresh && score > best_score) {
-                best_score = score; best_anchor_idx = i;
+            if (score > current_thresh) {
+                float cx = out.row(0)[i], cy = out.row(1)[i];
+                float bw = out.row(2)[i], bh = out.row(3)[i];
+                float xmin = cx - bw / 2.0f, ymin = cy - bh / 2.0f;
+                float xmax = cx + bw / 2.0f, ymax = cy + bh / 2.0f;
+                int left   = static_cast<int>((xmin - pad_left) / scale);
+                int top    = static_cast<int>((ymin - pad_top) / scale);
+                int right  = static_cast<int>((xmax - pad_left) / scale);
+                int bottom = static_cast<int>((ymax - pad_top) / scale);
+                candidates.push_back({i, score, Rect(left, top, right - left, bottom - top)});
             }
         }
+
+        if (!candidates.empty()) {
+            // 【算力狂飙点 1：局部排序降维】
+            // 最多只有 3 个物理物体，经验上取前 12 个最高分的框足够覆盖它们了。
+            int top_k = std::min((int)candidates.size(), 12);
+            // 相比于 std::sort 全量排序，partial_sort 只把前 12 名排好，剩下成百上千的废框连碰都不碰
+            std::partial_sort(candidates.begin(), candidates.begin() + top_k, candidates.end(), [](const AnchorData& a, const AnchorData& b) {
+                return a.score > b.score;
+            });
+            candidates.resize(top_k); // 瞬间丢弃 12 名开外的所有数据，把内存占用和后续计算量降到最低
+
+            // 2. NMS (非极大值抑制)
+            std::vector<AnchorData> nms_results;
+            for (const auto& cand : candidates) {
+                bool keep = true;
+                for (const auto& kept : nms_results) {
+                    float inter_area = (cand.bbox & kept.bbox).area();
+                    float union_area = cand.bbox.area() + kept.bbox.area() - inter_area;
+                    if (union_area > 0 && (inter_area / union_area) > 0.45f) { // IoU 阈值 45%
+                        keep = false; break;
+                    }
+                }
+                if (keep) {
+                    nms_results.push_back(cand);
+                    // 【算力狂飙点 2：物理上限抢占式截断】
+                    // 只要确认画面里已经找齐了 3 个独立物体，哪怕 candidates 里还有框，也直接强制结束 NMS 循环！
+                    if (nms_results.size() >= 3) break; 
+                }
+            }
+
+            // ==============================================================
+            // 3. 关键逻辑升级：带“置信度保护”的最左侧优先策略
+            // ==============================================================
+            
+            // 因为前面 partial_sort 已经按得分排过序，所以第 0 个绝对是全场得分最高的
+            AnchorData best_conf_obj = nms_results[0]; 
+            
+            // 遍历寻找画面中最左侧的物体
+            AnchorData leftmost_obj = nms_results[0];
+            for (const auto& res : nms_results) {
+                if (res.bbox.x < leftmost_obj.bbox.x) {
+                    leftmost_obj = res;
+                }
+            }
+
+            // 【核心判决】：计算最高分与最左侧得分的落差
+            AnchorData final_choice;
+            if (best_conf_obj.score - leftmost_obj.score > 0.4f) {
+                // 如果右边的完美物体比左边的残次品高出 0.4 分以上，放弃左边，保护抓取成功率！
+                final_choice = best_conf_obj;
+                cout << ">>> [AI 决策拦截] 最左侧物体得分(" << leftmost_obj.score 
+                     << ") 远低于最高分(" << best_conf_obj.score << ")，已强制锁定右侧高分目标！" << endl;
+            } else {
+                // 如果大家都挺清晰的（分差 <= 0.4），那就老老实实按物理位置，抓最左边的！
+                final_choice = leftmost_obj;
+            }
+
+            best_anchor_idx = final_choice.idx;
+            best_score = final_choice.score;
+        }
+
         if (best_anchor_idx != -1) {
             float cx = out.row(0)[best_anchor_idx], cy = out.row(1)[best_anchor_idx];
             float bw  = out.row(2)[best_anchor_idx], bh  = out.row(3)[best_anchor_idx];
@@ -910,6 +1002,64 @@ YoloResult runYoloInference(const Mat& frame, int target_class_id) {
             obj.bbox = Rect(left, top, right - left, bottom - top);
             obj.center = Point2f(obj.bbox.x + obj.bbox.width / 2.0f, obj.bbox.y + obj.bbox.height / 2.0f);
             obj.class_id = target_class_id; obj.confidence = best_score;
+
+            // ====================================================
+            // 新增：：：：解析 Segmentation 模型的像素掩码 (Mask)
+            // ====================================================
+            ncnn::Mat proto;
+            // 兼容不同的导出节点命名，通常是 out1 或 output1
+            int ret = ex.extract("out1", proto);
+            if (ret != 0) ret = ex.extract("output1", proto);
+
+            if (ret == 0) {
+                int num_mask_coeffs = proto.c; // 通常是 32
+                int inferred_num_classes = num_channels - 4 - num_mask_coeffs;
+
+                if (inferred_num_classes > 0) {
+                    // 1. 提取 32 个掩码系数
+                    std::vector<float> mask_coeffs(num_mask_coeffs);
+                    for (int k = 0; k < num_mask_coeffs; k++) {
+                        mask_coeffs[k] = out.row(4 + inferred_num_classes + k)[best_anchor_idx];
+                    }
+
+                    // 2. 矩阵乘法：系数 乘以 Proto特征图
+                    cv::Mat mask_mat(proto.h, proto.w, CV_32FC1, cv::Scalar(0));
+                    for (int p = 0; p < num_mask_coeffs; p++) {
+                        const float* ptr = proto.channel(p);
+                        float coeff = mask_coeffs[p];
+                        for (int y = 0; y < proto.h; y++) {
+                            float* row_ptr = mask_mat.ptr<float>(y);
+                            for (int x = 0; x < proto.w; x++) {
+                                row_ptr[x] += ptr[y * proto.w + x] * coeff;
+                            }
+                        }
+                    }
+
+                    // 3. Sigmoid 激活映射到 0~1
+                    cv::exp(-mask_mat, mask_mat);
+                    mask_mat = 1.0f / (1.0f + mask_mat);
+
+                    // 4. 尺寸还原 (缩放回原图大小并切掉 Padding)
+                    cv::Mat mask_resized, final_mask;
+                    cv::resize(mask_mat, mask_resized, cv::Size(INPUT_SIZE, INPUT_SIZE));
+                    cv::Mat mask_cropped = mask_resized(cv::Rect(pad_left, pad_top, INPUT_SIZE - pad_left - pad_right, INPUT_SIZE - pad_top - pad_bottom));
+                    cv::resize(mask_cropped, final_mask, cv::Size(frame.cols, frame.rows));
+
+                    // 5. 二值化并强制用 Bbox 裁切 (过滤框外的噪点)
+                    cv::Mat binary_mask;
+                    cv::threshold(final_mask, binary_mask, 0.5, 255, cv::THRESH_BINARY);
+                    binary_mask.convertTo(binary_mask, CV_8UC1);
+
+                    cv::Mat safe_bbox_mask = cv::Mat::zeros(binary_mask.size(), CV_8UC1);
+                    cv::Rect safe_rect = obj.bbox & cv::Rect(0, 0, frame.cols, frame.rows);
+                    if (safe_rect.area() > 0) {
+                        binary_mask(safe_rect).copyTo(safe_bbox_mask(safe_rect));
+                    }
+                    obj.ai_mask = safe_bbox_mask; 
+                }
+            }
+            // ====================================================
+
             result.objects.push_back(obj);
             cout << "[AI 专属锁定] 类别 ID: " << obj.class_id << " | 置信度: " << obj.confidence << endl;
         }
@@ -1036,104 +1186,82 @@ bool findOrderedCorners(const Mat& roi_frame, int class_id, std::vector<Point2f>
 
 bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners, Mat& out_mask) {
     if (roi_frame.empty() || roi_frame.cols < 15 || roi_frame.rows < 15) return false;
-    Mat gray, blurred, mask; 
+    
+    Mat gray, blurred, edges; 
     cvtColor(roi_frame, gray, COLOR_BGR2GRAY); 
-    GaussianBlur(gray, blurred, Size(9, 9), 0);
+    GaussianBlur(gray, blurred, Size(5, 5), 0);
     
-    // 动态阈值提取对象
-    Point2f center(roi_frame.cols / 2.0f, roi_frame.rows / 2.0f); 
-    Rect center_patch_rect(center.x - 15, center.y - 15, 30, 30);  
-    center_patch_rect &= Rect(0, 0, roi_frame.cols, roi_frame.rows);
-    if (center_patch_rect.area() <= 0) return false;
+    // 1. Canny提取边缘
+    Canny(blurred, edges, 30, 100); 
     
-    Mat center_patch = blurred(center_patch_rect);
-    Scalar mean_val, stddev_val; meanStdDev(center_patch, mean_val, stddev_val);
-    double tolerance = max(stddev_val[0] * 3.0, 30.0);   
-    inRange(blurred, mean_val[0] - tolerance, mean_val[0] + tolerance, mask);
+    Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3));
+    dilate(edges, edges, kernel); 
+    out_mask = edges.clone(); 
     
-    Mat open_kernel = getStructuringElement(MORPH_ELLIPSE, Size(7, 7));
-    Mat close_kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
-    morphologyEx(mask, mask, MORPH_OPEN, open_kernel); 
-    morphologyEx(mask, mask, MORPH_CLOSE, close_kernel); 
+    vector<vector<Point>> contours;
+    vector<Vec4i> hierarchy;
+    // ==========================================================
+    // 【核心升级1】：改用 RETR_TREE，获取所有轮廓及其嵌套层级关系
+    // ==========================================================
+    findContours(edges, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
+    if (contours.empty()) return false;
     
-    // 将原始的掩码保存给外部显示
-    out_mask = mask.clone();
+    // ==========================================================
+    // 【核心升级2】：寻找“中间没有其他大框”的最大纯净轮廓
+    // ==========================================================
+    double max_size = 0;
+    vector<Point> target_contour;
     
-    // 用一个较大的核进行开运算，吃掉左右两侧较薄的凸起矩形
-    Mat body_mask;
-    Mat strong_open_kernel = getStructuringElement(MORPH_RECT, Size(15, 15)); 
-    morphologyEx(mask, body_mask, MORPH_OPEN, strong_open_kernel);
-
-    // 获取纯净的中间主矩形轮廓
-    vector<vector<Point>> body_contours;
-    findContours(body_mask, body_contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-    if (body_contours.empty()) return false;
-    
-    double max_area = 0; vector<Point> best_body;
-    for (const auto& c : body_contours) {
-        double area = contourArea(c);
-        if (area > max_area) { max_area = area; best_body = c; }
+    for (size_t i = 0; i < contours.size(); i++) {
+        // 检查这个框的肚子里有没有实质性的子框
+        bool has_inner_box = false;
+        int child_idx = hierarchy[i][2]; // 第一个子轮廓的索引
+        
+        while (child_idx != -1) {
+            // 如果内部包含了面积大于 50 的线框，说明它是个包络外框
+            if (boundingRect(contours[child_idx]).area() > 50) { 
+                has_inner_box = true;
+                break;
+            }
+            child_idx = hierarchy[child_idx][0]; // 检查下一个并列的子轮廓
+        }
+        
+        // 如果中间有其他框，直接过滤掉，我们不要外包络！
+        if (has_inner_box) continue; 
+        
+        // 选出“空心框”中，跨度面积最大的那个
+        double size = boundingRect(contours[i]).area();
+        if (size > max_size) { 
+            max_size = size; 
+            target_contour = contours[i]; 
+        }
     }
-    if (max_area < roi_frame.cols * roi_frame.rows * 0.05) return false;
-
-    // 计算中间主矩形的精确位姿 (提取真实的绝对高度和旋转角度)
-    RotatedRect body_rect = minAreaRect(best_body);
-    Point2f bp[4];
-    body_rect.points(bp);
-
-    // 判断哪条是长轴(宽度方向)，哪条是短轴(高度方向)
-    float len01 = norm(bp[1] - bp[0]);
-    float len12 = norm(bp[2] - bp[1]);
-    Point2f v_long, v_short;
-    float true_height;
     
-    if (len01 > len12) {
-        v_long = (bp[1] - bp[0]) / len01;  // 长轴单位向量
-        v_short = (bp[2] - bp[1]) / len12; // 短轴单位向量
-        true_height = len12;               // 绝对真实的等高高度
-    } else {
-        v_long = (bp[2] - bp[1]) / len12;
-        v_short = (bp[1] - bp[0]) / len01;
-        true_height = len01;
-    }
+    // 面积不能太小（排除死区噪点）
+    if (target_contour.empty() || max_size < roi_frame.cols * roi_frame.rows * 0.1) return false;
 
-    // 将原始完整 mask(包含侧边凸起) 的所有点，降维投影到长轴上
-    vector<Point> all_pts;
-    findNonZero(mask, all_pts);
-    if (all_pts.empty()) return false;
+    // ==========================================================
+    // 【核心升级3】：彻底抛弃 convexHull，直接在纯净内框上抓取四大极值点！
+    // ==========================================================
+    Point2f tl = target_contour[0], tr = target_contour[0], br = target_contour[0], bl = target_contour[0];
+    
+    float min_x_plus_y = 1e9;   
+    float max_x_minus_y = -1e9; 
+    float max_x_plus_y = -1e9;  
+    float min_x_minus_y = 1e9;  
 
-    float min_proj = 1e9, max_proj = -1e9;
-    for (const auto& p : all_pts) {
-        Point2f v = Point2f(p.x, p.y) - body_rect.center;
-        // 点乘计算在这个向量方向上的物理延伸长度
-        float proj = v.x * v_long.x + v.y * v_long.y; 
-        if (proj < min_proj) min_proj = proj;
-        if (proj > max_proj) max_proj = proj;
+    for (auto p : target_contour) {
+        float x = p.x;
+        float y = p.y;
+        
+        if (x + y < min_x_plus_y)  { min_x_plus_y = x + y;  tl = p; } 
+        if (x - y > max_x_minus_y) { max_x_minus_y = x - y; tr = p; } 
+        if (x + y > max_x_plus_y)  { max_x_plus_y = x + y;  br = p; } 
+        if (x - y < min_x_minus_y) { min_x_minus_y = x - y; bl = p; } 
     }
 
-    // 虚拟重构：利用 真实宽度 + 真实高度 凭空组装出完美的 4 个角点
-    float true_length = max_proj - min_proj;
-    float center_shift = (max_proj + min_proj) / 2.0f;
-    Point2f true_center = body_rect.center + v_long * center_shift;
-
-    Point2f half_long = v_long * (true_length / 2.0f);
-    Point2f half_short = v_short * (true_height / 2.0f);
-
-    std::vector<Point2f> corners;
-    corners.push_back(true_center + half_long + half_short);
-    corners.push_back(true_center + half_long - half_short);
-    corners.push_back(true_center - half_long - half_short);
-    corners.push_back(true_center - half_long + half_short);
-
-    // 将生成的理想点顺时针排序 (TL, TR, BR, BL)
-    std::vector<Point2f> top, bot;
-    std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b){ return a.y < b.y; });
-    top.push_back(corners[0]); top.push_back(corners[1]); 
-    bot.push_back(corners[2]); bot.push_back(corners[3]);
-    
-    if (top[0].x > top[1].x) std::swap(top[0], top[1]);
-    if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
-    ordered_corners = {top[0], top[1], bot[1], bot[0]}; 
+    // 4. 将这 4 个点按 PnP 要求的顺序排列 (TL, TR, BR, BL)
+    ordered_corners = {tl, tr, br, bl}; 
     
     return true;
 }
@@ -1269,7 +1397,7 @@ private:
     }
 
     bool handleBlindOperations(const DemoTask& current_task) {
-        if (current_task.raw_cmd == "DEMO002"|| current_task.raw_cmd == "DEMO003"|| current_task.raw_cmd == "DEMO004") {
+        if ( current_task.raw_cmd == "DEMO004") {
             if (!g_cl_state.last_rvec.empty() && !g_cl_state.last_tvec.empty()) {
                 cout << ">>> [视觉记忆跳跃] 检测到单独下发 " << current_task.raw_cmd << "，调用物理矩阵跳过 YOLO！" << endl;
                 Pose6D arm0_pose = calibrator.transform(g_cl_state.last_rvec, g_cl_state.last_tvec, 0);
@@ -1315,87 +1443,179 @@ private:
                         Mat roi_frame = raw_frame(safe_crop); 
                         std::vector<Point2f> raw_centers = runNextYoloInferenceRaw(roi_frame);
                         std::vector<Point2f> global_raw;
-                        for (const auto& pt : raw_centers) global_raw.push_back(Point2f(pt.x + safe_crop.x, pt.y + safe_crop.y));
-                        obj.sub_centers = clusterPoints(global_raw, 12.0f); 
-                        cout << ">>> [二次级联] ID=" << obj.class_id << " 区域内原始 " << raw_centers.size() << " 个候选点，聚类出 " << obj.sub_centers.size() << " 个四棱台特征。" << endl;
+                        int dropped_points = 0;
+                        for (const auto& pt : raw_centers) {
+                            Point2f global_pt(pt.x + safe_crop.x, pt.y + safe_crop.y);
 
-                        // 只有 ID=0 才去做透视矩阵的角点修复
+                            // 确保坐标不越界
+                            int px = std::max(0, std::min(raw_frame.cols - 1, (int)std::round(global_pt.x)));
+                            int py = std::max(0, std::min(raw_frame.rows - 1, (int)std::round(global_pt.y)));
+
+                            // 只有当掩码不为空，且该坐标在掩码图上是有像素的（>0），才被认为是有效点
+                            if (!obj.ai_mask.empty() && obj.ai_mask.at<uchar>(py, px) > 0) {
+                                global_raw.push_back(global_pt);
+                            } else {
+                                dropped_points++;
+                            }
+                        }
+
+                            obj.sub_centers = clusterPoints(global_raw, 12.0f); 
+                            cout << ">>> [二次级联] ID=" << obj.class_id << " | next.pt 原始点:" << raw_centers.size() 
+                                 << " | 掩码过滤掉噪点:" << dropped_points 
+                                 << " | 最终聚类有效特征点:" << obj.sub_centers.size() << endl;
+                                 
+                            // 注意：只有 ID=0 才去做透视矩阵的角点修复
                         if (obj.class_id == 0 && obj.sub_centers.size() >= 4) {
                             bool perspective_fixed = false;
-                            
-                            std::vector<Point2f> pts;
-                            float mid_x = obj.bbox.x + obj.bbox.width / 2.0f; // 获取 YOLO 框的正中心 X 坐标
-                            for (auto p : obj.sub_centers) {
-                                // 只看右半面的点
-                                if (p.x > mid_x) {
-                                    pts.push_back(p);
-                                }
-                            }
-                            
-                            if (pts.size() > 40) pts.resize(40);
-                            int n = pts.size();
+                            std::vector<Point2f> pts = obj.sub_centers;
 
-                            // 只要右半边剩下的点足够构成一条竖线
-                            if (n >= 4) {
-                                std::vector<Point2f> best_v;
-                                float min_x_span = 1e9;
+                            // 定义核心游走引擎
+                            auto pushPoint = [](Point2f cur, const std::vector<Point2f>& pts_list, char dir) -> Point2f {
+                                std::vector<Point2f> valid_pts;
+                                for (auto p : pts_list) {
+                                    if (norm(p - cur) < 5.0f) continue;
+                                    if (dir == 'R' && p.x > cur.x + 5.0f) valid_pts.push_back(p);
+                                    if (dir == 'L' && p.x < cur.x - 5.0f) valid_pts.push_back(p);
+                                    if (dir == 'U' && p.y < cur.y - 5.0f) valid_pts.push_back(p); 
+                                }
+                                if (valid_pts.empty()) return cur;
+
+                                std::sort(valid_pts.begin(), valid_pts.end(), [cur](Point2f a, Point2f b){
+                                    return (abs(a.x - cur.x) + abs(a.y - cur.y)) < (abs(b.x - cur.x) + abs(b.y - cur.y));
+                                });
+
+                                int k = std::min(3, (int)valid_pts.size());
+                                Point2f best_pt = cur;
+                                float min_diff = 1e9;
+                                for (int i = 0; i < k; ++i) {
+                                    Point2f p = valid_pts[i];
+                                    float diff = (dir == 'U') ? abs(p.x - cur.x) : abs(p.y - cur.y);
+                                    if (diff < min_diff) { min_diff = diff; best_pt = p; }
+                                }
+                                return best_pt;
+                            };
+
+                            std::vector<Point2f> final_corners;
+
+                            // ==============================================================
+                            // 动态场景分支：根据当前 Demo 的进度，应用不同的拓扑推导策略
+                            // ==============================================================
+                            if (current_task.action_id == 0) {
+                                // 【DEMO000】：无遮挡理想状态，直接利用极值锁定四大外围角点
+                                Point2f P1 = pts[0], P4 = pts[0], P7 = pts[0], P10 = pts[0];
+                                float min_x_minus_y = 1e9;  // 找左下 (1号)
+                                float max_x_plus_y = -1e9;  // 找右下 (4号)
+                                float max_x_minus_y = -1e9; // 找右上 (7号)
+                                float min_x_plus_y = 1e9;   // 找左上 (10号)
                                 
-                                // 穷举找 X 跨度最小的 4 个点 (锁定最右侧竖线)
-                                for(int i=0; i<n; i++) {
-                                    for(int j=i+1; j<n; j++) {
-                                        for(int k=j+1; k<n; k++) {
-                                            for(int m=k+1; m<n; m++) {
-                                                float min_x = min({pts[i].x, pts[j].x, pts[k].x, pts[m].x});
-                                                float max_x = max({pts[i].x, pts[j].x, pts[k].x, pts[m].x});
-                                                float min_y = min({pts[i].y, pts[j].y, pts[k].y, pts[m].y});
-                                                float max_y = max({pts[i].y, pts[j].y, pts[k].y, pts[m].y});
-                                                float x_span = max_x - min_x;
-                                                float y_span = max_y - min_y;
-                                                
-                                                // Y 跨度只需大于 35，保证是一根有长度的物理线即可
-                                                if (y_span > 35.0f && x_span < min_x_span) {
-                                                    min_x_span = x_span;
-                                                    best_v = {pts[i], pts[j], pts[k], pts[m]};
-                                                }
-                                            }
-                                        }
-                                    }
+                                for (auto p : pts) {
+                                    if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }   // 1号点：X最小Y最大
+                                    if (p.x + p.y > max_x_plus_y)  { max_x_plus_y = p.x + p.y;  P4 = p; }   // 4号点：X最大Y最大
+                                    if (p.x - p.y > max_x_minus_y) { max_x_minus_y = p.x - p.y; P7 = p; }   // 7号点：X最大Y最小
+                                    if (p.x + p.y < min_x_plus_y)  { min_x_plus_y = p.x + p.y;  P10 = p; }  // 10号点：X最小Y最小
                                 }
-
-                                if (best_v.size() == 4) {
-                                    std::sort(best_v.begin(), best_v.end(), [](Point2f a, Point2f b){ return a.y < b.y; });
-                                    Point2f P7 = best_v[0]; // 右上角 (7号点)
-                                    Point2f P4 = best_v[3]; // 右下角 (4号点)
-
-                                    std::vector<Point2f> rem_pts;
-                                    for (auto p : pts) {
-                                        bool in_v = false;
-                                        for (auto vp : best_v) if (norm(p - vp) < 5.0f) { in_v = true; break; }
-                                        if (!in_v) rem_pts.push_back(p);
-                                    }
-
-                                    std::vector<Point2f> bot_line, top_line;
-                                    for (auto p : rem_pts) {
-                                        if (abs(p.y - P4.y) < 45.0f && p.x < P4.x - 5.0f) bot_line.push_back(p);
-                                        if (abs(p.y - P7.y) < 45.0f && p.x < P7.x - 5.0f) top_line.push_back(p);
-                                    }
-
-                                    if (bot_line.size() >= 2 && top_line.size() >= 2) {
-                                        // 按照物理直线距离从小到大排序
-                                        std::sort(bot_line.begin(), bot_line.end(), [P4](Point2f a, Point2f b){ return norm(a - P4) < norm(b - P4); });
-                                        std::sort(top_line.begin(), top_line.end(), [P7](Point2f a, Point2f b){ return norm(a - P7) < norm(b - P7); });
-
-                                        Point2f P2 = bot_line[1]; 
-                                        Point2f P9 = top_line[1]; 
-                                        Point2f P1 = P4 + 1.5f * (P2 - P4);
-                                        Point2f P10 = P7 + 1.5f * (P9 - P7);
-                                        obj.corners_2d = {P10, P7, P4, P1};
-                                        perspective_fixed = true;
-                                        cout << ">>> 定位右侧骨架" << endl;
-                                    }
-                                }
+                                
+                                final_corners = {P10, P7, P4, P1};
+                                perspective_fixed = true;
+                                cout << ">>> [DEMO000 四角锁定] 成功直接提取 1/4/7/10 号角点，杜绝推导误差！" << endl;
                             }
-                            // 兜底逻辑（没遮挡或提取失败时执行）
+                            else if (current_task.action_id == 1) {
+                                // 【DEMO001】：1号点被挡，找右下角的点为4号点，逆向推导
+                                Point2f P4 = pts[0];
+                                float max_x_plus_y = -1e9;
+                                for (auto p : pts) {
+                                    // 右下角 (4号点)：X最大，Y最大 -> x + y 最大
+                                    if (p.x + p.y > max_x_plus_y) { 
+                                        max_x_plus_y = p.x + p.y; 
+                                        P4 = p; 
+                                    }
+                                }
+                                Point2f P3 = pushPoint(P4, pts, 'L');
+                                Point2f P2 = pushPoint(P3, pts, 'L');
+                                
+                                // 向左补一个点变为 1号点 (利用 2和3 的间距)
+                                Point2f P1 = P2 + (P2 - P3);
+                                // 兜底：如果推点失败导致点重合，给定一个经验横移量
+                                if (norm(P2 - P3) < 5.0f) {
+                                    P1 = Point2f(P2.x - 30.0f, P2.y); 
+                                }
+                                Point2f P5 = pushPoint(P4, pts, 'U');
+                                Point2f P6 = pushPoint(P5, pts, 'U');
+                                Point2f P7 = pushPoint(P6, pts, 'U');
+                                Point2f P8 = pushPoint(P7, pts, 'L');
+                                Point2f P9 = pushPoint(P8, pts, 'L');
+                                Point2f P10 = P9 + (P9 - P8);
+                                // 兜底：根据矩形对角线向量补齐
+                                if (norm(P9 - P8) < 5.0f) {
+                                    P10 = P1 + P7 - P4; 
+                                }
+
+                                final_corners = {P10, P7, P4, P1};
+                                perspective_fixed = true;
+                                cout << ">>> [DEMO001 右侧起手] 成功锁定右下角 4号点，逆向向左游走完美推演出 1/10 号角点！" << endl;
+                            }
+                            else if (current_task.action_id == 3) {
+                                // 【DEMO003】：1号点被挡住，从2号点起手推导
+                                Point2f P2 = pts[0];
+                                float min_x_minus_y = 1e9;
+                                for (auto p : pts) {
+                                    // 因为 1 号点没了，X-Y 最小的自然就是最左下的 2 号点
+                                    if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P2 = p; }
+                                }
+                                Point2f P3 = pushPoint(P2, pts, 'R');
+                                Point2f P4 = pushPoint(P3, pts, 'R'); // 向右推两次到 4
+                                Point2f P5 = pushPoint(P4, pts, 'U');
+                                Point2f P6 = pushPoint(P5, pts, 'U');
+                                Point2f P7 = pushPoint(P6, pts, 'U'); // 向上推三次到 7
+                                Point2f P8 = pushPoint(P7, pts, 'L');
+                                Point2f P9 = pushPoint(P8, pts, 'L'); // 向左推两次到 9
+                                
+                                // 向左推演补齐 10号点
+                                Point2f P10 = P9 + (P9 - P8);
+                                // 向左推演补齐 1号点 (利用 2和3 的间距)
+                                Point2f P1 = P2 - (P3 - P2);
+                                
+                                final_corners = {P10, P7, P4, P1};
+                                perspective_fixed = true;
+                                cout << ">>> [DEMO003 严重遮挡] 1号点丢失，从 2号点游走推导，双向完美补齐 1/10 号角点！" << endl;
+                            }
+                            else {
+                                // 【DEMO002】(及默认状态)：1号点起手，推导1~9并补10
+                                Point2f P1 = pts[0];
+                                float min_x_minus_y = 1e9;
+                                for (auto p : pts) {
+                                    if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }
+                                }
+                                Point2f P2 = pushPoint(P1, pts, 'R');
+                                Point2f P3 = pushPoint(P2, pts, 'R');
+                                Point2f P4 = pushPoint(P3, pts, 'R'); // 向右推三次到 4
+                                Point2f P5 = pushPoint(P4, pts, 'U');
+                                Point2f P6 = pushPoint(P5, pts, 'U');
+                                Point2f P7 = pushPoint(P6, pts, 'U'); // 向上推三次到 7
+                                Point2f P8 = pushPoint(P7, pts, 'L');
+                                Point2f P9 = pushPoint(P8, pts, 'L'); // 向左推两次到 9
+                                
+                                // 补齐 10号点
+                                Point2f P10 = P9 + (P9 - P8);
+                                
+                                final_corners = {P10, P7, P4, P1};
+                                perspective_fixed = true;
+                                cout << ">>> [DEMO002 标准遮挡] 从 1号点发起游走，成功利用向量法补全 10 号角点！" << endl;
+                            }
+
+                            if (perspective_fixed) {
+                                std::vector<Point2f> top, bot;
+                                std::sort(final_corners.begin(), final_corners.end(), [](Point2f a, Point2f b){ return a.y < b.y; });
+                                top.push_back(final_corners[0]); top.push_back(final_corners[1]); 
+                                bot.push_back(final_corners[2]); bot.push_back(final_corners[3]);
+                                if (top[0].x > top[1].x) std::swap(top[0], top[1]);
+                                if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
+                                obj.corners_2d = {top[0], top[1], bot[1], bot[0]};
+                            }
+
+                            // ==============================================================
+                            // 万能兜底逻辑（如果点数不足 9 个，退回标准 4 点包裹提取）
+                            // ==============================================================
                             if (!perspective_fixed) {
                                 RotatedRect min_rect = minAreaRect(obj.sub_centers); 
                                 Point2f rect_pts[4]; min_rect.points(rect_pts);
@@ -1418,111 +1638,39 @@ private:
                             }
                         }
                 
-                        // 利用 1号和 4号点构造并膨胀出“虚拟 YOLO 框”
+                        // -------------------------------------------------------------
+                        // 【极简重构】：ID=9 无噪点版，直接锁定左下角(1)和右下角(4)
+                        // -------------------------------------------------------------
                         if (obj.class_id == 9 && obj.sub_centers.size() >= 4) {
                             std::vector<Point2f> pts = obj.sub_centers;
-                            std::vector<Point2f> best_v, best_h;
-                            float max_v_score = -1e9, max_h_score = -1e9;
 
-                            if (pts.size() > 40) pts.resize(40);
-                            int n = pts.size();
-
-                            // 寻找纵轴 (粗略定位右侧竖线)
-                            auto eval_v_subset = [&](const std::vector<Point2f>& sub) {
-                                float min_x = 1e9, max_x = -1e9, sum_x = 0;
-                                for(auto p : sub) { if(p.x < min_x) min_x = p.x; if(p.x > max_x) max_x = p.x; sum_x += p.x; }
-                                float x_span = max_x - min_x;
-                                if (x_span < 25.0f) {
-                                    float score = sub.size() * 1000.0f + (sum_x/sub.size()) * 1.0f - x_span * 2.0f;
-                                    if (score > max_v_score) { max_v_score = score; best_v = sub; }
-                                }
-                            };
-                            for(int i=0; i<n; i++) for(int j=i+1; j<n; j++) {
-                                eval_v_subset({pts[i], pts[j]});
-                                for(int k=j+1; k<n; k++) {
-                                    eval_v_subset({pts[i], pts[j], pts[k]});
-                                    for(int m=k+1; m<n; m++) eval_v_subset({pts[i], pts[j], pts[k], pts[m]});
-                                }
+                            // 极值几何锁定：
+                            // 左下 (1号点)：X最小，Y最大 -> x - y 最小
+                            // 右下 (4号点)：X最大，Y最大 -> x + y 最大
+                            Point2f P1 = pts[0], P4 = pts[0];
+                            float min_x_minus_y = 1e9, max_x_plus_y = -1e9;
+                            
+                            for (auto p : pts) {
+                                if (p.x - p.y < min_x_minus_y) { 
+                                    min_x_minus_y = p.x - p.y; 
+                                    P1 = p; 
+                                } 
+                                if (p.x + p.y > max_x_plus_y) { 
+                                    max_x_plus_y = p.x + p.y; 
+                                    P4 = p; 
+                                }   
                             }
 
-                            // 剔除纵轴点，在剩余点中寻找横轴
-                            std::vector<Point2f> rem_pts;
-                            for(auto p : pts) {
-                                bool in_v = false;
-                                for(auto vp : best_v) if (norm(p - vp) < 5.0f) { in_v = true; break; }
-                                if (!in_v) rem_pts.push_back(p);
-                            }
-                            int m = rem_pts.size();
-                            auto eval_h_subset = [&](const std::vector<Point2f>& sub) {
-                                float min_y = 1e9, max_y = -1e9, sum_y = 0;
-                                for(auto p : sub) { if(p.y < min_y) min_y = p.y; if(p.y > max_y) max_y = p.y; sum_y += p.y; }
-                                float y_span = max_y - min_y;
-                                if (y_span < 25.0f) {
-                                    float score = sub.size() * 1000.0f + (sum_y/sub.size()) * 1.0f - y_span * 2.0f;
-                                    if (score > max_h_score) { max_h_score = score; best_h = sub; }
-                                }
-                            };
-                            for(int i=0; i<m; i++) for(int j=i+1; j<m; j++) {
-                                eval_h_subset({rem_pts[i], rem_pts[j]});
-                                for(int k=j+1; k<m; k++) {
-                                    eval_h_subset({rem_pts[i], rem_pts[j], rem_pts[k]});
-                                    for(int l=k+1; l<m; l++) eval_h_subset({rem_pts[i], rem_pts[j], rem_pts[k], rem_pts[l]});
-                                }
-                            }
+                            // 生成虚拟紧凑框并执行四向膨胀
+                            // 以 P1(左下) 和 P4(右下) 为基准：上移20，左移60，下移40，右不变 (像素)
+                            int new_x = P1.x - 60;
+                            int new_y = P1.y - 20;
+                            int new_w = (P4.x - P1.x) + 60;      
+                            int new_h = (P4.y - P1.y) + 20 + 40; 
 
-                            if (!best_v.empty() && !best_h.empty()) {
-                                std::sort(best_v.begin(), best_v.end(), [](Point2f a, Point2f b){ return a.y < b.y; }); // 上到下
-                                std::sort(best_h.begin(), best_h.end(), [](Point2f a, Point2f b){ return a.x < b.x; }); // 左到右
-
-                                // 锁定竖线后，提取物理最底端的四棱台作为 4号点
-                                float avg_v_x = 0;
-                                for (auto p : best_v) avg_v_x += p.x;
-                                avg_v_x /= best_v.size();
-
-                                Point2f p4_pix = best_v.back(); // 兜底
-                                float max_y = -1e9;
-                                for (auto p : pts) {
-                                    // 放宽容差至 60 像素
-                                    if (abs(p.x - avg_v_x) < 60.0f) {
-                                        if (p.y > max_y) {
-                                            max_y = p.y;
-                                            p4_pix = p; 
-                                        }
-                                    }
-                                }
-
-                                Point2f p1_pix = best_h.front(); // 横轴最左端 (1号点)
-                                if (best_h.size() == 2) {
-                                    p1_pix = best_h[0] - (best_h[1] - best_h[0]);
-                                    cout << ">>> 横轴 1号点缺失 已利用等距向量反推补齐" << endl;
-                                } else {
-                                    float avg_h_y = 0;
-                                    for (auto p : best_h) avg_h_y += p.y;
-                                    avg_h_y /= best_h.size();
-                                    
-                                    float min_x = 1e9;
-                                    for (auto p : pts) {
-                                        if (abs(p.y - avg_h_y) < 30.0f) {
-                                            if (p.x < min_x) {
-                                                min_x = p.x;
-                                                p1_pix = p; 
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 生成虚拟紧凑框并执行四向膨胀
-                                // 原点 P1为左上，P4为右下.上移20，左移60，下移40，右不变
-                                int new_x = p1_pix.x - 60;
-                                int new_y = p1_pix.y - 20;
-                                int new_w = (p4_pix.x - p1_pix.x) + 60;      
-                                int new_h = (p4_pix.y - p1_pix.y) + 20 + 40; 
-
-                                obj.bbox = Rect(new_x, new_y, new_w, new_h);
-                                cout << ">>> [极值锁定] ID=9 已锁最底端四棱台为4号点 准备送入底层二值化 PnP..." << endl;
-                            } else {
-                                obj.bbox = Rect(0,0,0,0);
-                            }
+                            obj.bbox = Rect(new_x, new_y, new_w, new_h);
+                            cout << ">>> [极简极值锁定] ID=9 已成功锁定 1号点与 4号点，外扩生成虚拟选区！" << endl;
+                            
                         } else if (obj.class_id == 9) {
                             obj.bbox = Rect(0,0,0,0);
                         }
@@ -1530,15 +1678,31 @@ private:
                     }
                 }
 
-                obj.has_refined_center = false; Rect safe_bbox = obj.bbox & Rect(0, 0, raw_frame.cols, raw_frame.rows);
+                obj.has_refined_center = false; 
+                
+                // ==========================================================
+                // 【新增】：针对 ID=1~3，将 YOLO 框向四周放大 30 像素，防止切掉角点
+                // ==========================================================
+                if (obj.class_id >= 1 && obj.class_id <= 3) {
+                    int expand_px = 30;
+                    obj.bbox.x -= expand_px;
+                    obj.bbox.y -= expand_px;
+                    // 注意：因为左右各宽了30，所以 width 增加了 60；上下同理
+                    obj.bbox.width += expand_px * 2;
+                    obj.bbox.height += expand_px * 2;
+                }
+
+                // 这一步与原画幅进行求交集 ( & Rect )，完美防止放大后越界导致的 Crash
+                Rect safe_bbox = obj.bbox & Rect(0, 0, raw_frame.cols, raw_frame.rows);
                 if (safe_bbox.area() <= 0) continue;
+
                 bool feature_extracted = false;
                 if (obj.class_id == 0) { 
                     if (obj.corners_2d.size() == 4) feature_extracted = true; 
                 }
                 else {
                     Mat roi_frame = raw_frame(safe_bbox); std::vector<Point2f> local_corners;
-                    feature_extracted = (obj.class_id == 1 || obj.class_id == 2) ? 
+                    feature_extracted = (obj.class_id >= 1 && obj.class_id <= 3) ? 
                                         findWallCorners(roi_frame, local_corners, obj.roi_mask) : 
                                         findOrderedCorners(roi_frame, obj.class_id, local_corners, obj.roi_mask);
                     if (feature_extracted) {
@@ -1690,7 +1854,7 @@ public:
             float left_y = (float)left_y_sum / left_count; 
             float right_y = (float)right_y_sum / right_count;
             
-            float target_dist_from_bottom = 72.0f; // 如果想让车板在画面里更靠下（镜头抬高），把这个值改小，单位：像素
+            float target_dist_from_bottom = 62.0f; // 如果想让车板在画面里更靠下（镜头抬高），把这个值改小，单位：像素
             float target_y = roi_h - target_dist_from_bottom; 
 
             float err_tilt = center_y - target_y; 
@@ -1704,9 +1868,9 @@ public:
             } else {
                 if (!tilt_ok) g_cam_tilt += Kp_tilt * err_tilt;
                 if (!pan_ok)  g_cam_pan  += Kp_pan * err_pan;
-                if (g_cam_pan < 20) g_cam_pan = 20; if (g_cam_pan > 70) g_cam_pan = 70;
+                if (g_cam_pan < 20) g_cam_pan = 20; if (g_cam_pan > 170) g_cam_pan = 170;
                 if (g_cam_tilt < 20.0f) g_cam_tilt = 20.0f; 
-                if (g_cam_tilt > 60.0f) g_cam_tilt = 60.0f;
+                if (g_cam_tilt > 70.0f) g_cam_tilt = 70.0f;
 
                 //static int frame_counter = 0;
                 //if (frame_counter++ % 4 == 0) { 
@@ -1728,7 +1892,7 @@ public:
             std::cout << "[云台伺服警告] 视野内丢失车板！正在自动向下低头寻找..." << std::endl;
             // 每次找不到时，让俯仰角向下低头 1.0 度 (度数越大越往下)
             g_cam_tilt += 1.0f; 
-            if (g_cam_tilt > 50.0f) g_cam_tilt = 50.0f; // 物理限位保护
+            if (g_cam_tilt > 70.0f) g_cam_tilt = 70.0f; // 物理限位保护
             // 同样需要降帧发送，避免指令发得太快导致舵机卡死或过度震荡
             static int search_frame_counter = 0;
             if (search_frame_counter++ % 4 == 0) { 
@@ -1774,6 +1938,15 @@ public:
                 obj.bbox &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
                 if (obj.bbox.width < 15 || obj.bbox.height < 15) continue; 
                 Scalar color( (obj.class_id * 80) % 255, (obj.class_id * 150) % 255, (obj.class_id * 200 + 100) % 255 );
+                // =======================================================
+                // 【新增】：将 AI 预测出的 Mask 以 50% 透明度彩色叠加在主画面上！
+                // =======================================================
+                if (!obj.ai_mask.empty()) {
+                    Mat color_mask = Mat::zeros(raw_frame.size(), raw_frame.type());
+                    color_mask.setTo(color, obj.ai_mask); // 用边框对应的颜色填充掩码区域
+                    addWeighted(raw_frame, 1.0, color_mask, 0.5, 0.0, raw_frame); // 混合叠加
+                }
+                // =======================================================
                 rectangle(raw_frame, obj.bbox, color, 2); 
                 
                 for (const auto& pt : obj.sub_centers) circle(raw_frame, pt, 4, Scalar(0, 0, 255), -1); 
