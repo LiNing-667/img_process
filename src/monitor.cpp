@@ -392,34 +392,31 @@ void processTextCommand(const std::string& cmd_line) {
             //=======================================================
              send_serial_cmd("DEMO", 1000); 
              // 第1步：小车移动
-             send_serial_cmd("MW 35", 3000);  
-             send_serial_cmd("MQ", 3500);  
-             send_serial_cmd("MW 40", 2000);  
-             send_serial_cmd("MQ", 3500); 
-             send_serial_cmd("Find", 3000);
-             send_serial_cmd("MW 12", 2000);
-             // 第2步：运行nod指令
-             do_nod();
-             usleep(500000); // 停顿 0.5 秒让云台稳定
-             // 第3步：运行demo131 
-             do_vision_demo(1, 3, 1, "DEMO131", 25000); 
-             // 第4步：运行两三个小车移动指令。
-             send_serial_cmd("MS 18", 2000); 
-             send_serial_cmd("ME", 4000);
-             send_serial_cmd("MW 22", 2000);  
-             // 第5步：运行demo000 (寻找底座ID=0测试定位)
-             do_vision_demo(0, 0, 0, "DEMO000", 20000); 
-             // 第6步：
-             send_serial_cmd("MS 40", 3000); 
-             send_serial_cmd("ME ", 4000);   
-             send_serial_cmd("MW 20", 3000); 
-             //第7步：
-             do_vision_demo(0, 9, 1, "DEMO091", 20000); 
-             //第8步：
-             send_serial_cmd("DO003 ", 2000) ;
-             send_serial_cmd("MS 30 ", 1000) ;
-             send_serial_cmd("DEMO", 1000); 
+             //do_vision_demo(1, 3, 1, "DEMO131", 15000);   
+             send_serial_cmd("MS 28", 2000);  
+             send_serial_cmd("ME 93.5", 3000);  
+             send_serial_cmd("MW 9", 2000); 
+             //do_vision_demo(0, 0, 0, "DEMO000", 20000);
+             send_serial_cmd("MS 20", 2000);
+             send_serial_cmd("ME 93.5", 3000); 
 
+             send_serial_cmd("MW 34", 2000);
+             //do_vision_demo(0, 9, 1, "DEMO091", 20000);
+             send_serial_cmd("DO031", 25000);
+             // 第2步：运行nod指令
+
+             send_serial_cmd("MS 34", 2000);
+             send_serial_cmd("ME 93.5", 3000); 
+             send_serial_cmd("MW 70", 4000);
+
+             send_serial_cmd("ME 93.5", 3000); 
+             send_serial_cmd("MW 28", 3000); 
+
+             //do_vision_demo(0, 2, 1, "DEMO021", 20000);
+             send_serial_cmd("ME 93.5", 3000); 
+             send_serial_cmd("MW 40", 3000);
+
+             send_serial_cmd("ME 93.5", 3000); 
 
             std::cout << ">>> 动作链结束！" << std::endl;
         }).detach(); 
@@ -1184,7 +1181,7 @@ bool findOrderedCorners(const Mat& roi_frame, int class_id, std::vector<Point2f>
     ordered_corners = {top[0], top[1], bot[1], bot[0]}; return true;
 }
 
-bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners, Mat& out_mask) {
+bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners, Mat& out_mask, int class_id) {
     if (roi_frame.empty() || roi_frame.cols < 15 || roi_frame.rows < 15) return false;
     
     Mat gray, blurred, edges; 
@@ -1195,41 +1192,42 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
     Canny(blurred, edges, 30, 100); 
     
     Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3));
-    dilate(edges, edges, kernel); 
-    out_mask = edges.clone(); 
-    
+    dilate(edges, edges, kernel);
+
+    // ==========================================================
+    // 【新增】仅对 ID=9 使用大核闭运算焊接断线，其他 ID 跳过
+    // ==========================================================
+    if (class_id == 9) {
+        Mat close_kernel = getStructuringElement(MORPH_RECT, Size(25, 25));
+        morphologyEx(edges, edges, MORPH_CLOSE, close_kernel);
+    }
+
+    out_mask = edges.clone();  // 只保留这一次赋值
+
     vector<vector<Point>> contours;
     vector<Vec4i> hierarchy;
-    // ==========================================================
-    // 【核心升级1】：改用 RETR_TREE，获取所有轮廓及其嵌套层级关系
-    // ==========================================================
     findContours(edges, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
     if (contours.empty()) return false;
     
-    // ==========================================================
-    // 【核心升级2】：寻找“中间没有其他大框”的最大纯净轮廓
-    // ==========================================================
     double max_size = 0;
     vector<Point> target_contour;
     
     for (size_t i = 0; i < contours.size(); i++) {
-        // 检查这个框的肚子里有没有实质性的子框
         bool has_inner_box = false;
-        int child_idx = hierarchy[i][2]; // 第一个子轮廓的索引
-        
-        while (child_idx != -1) {
-            // 如果内部包含了面积大于 50 的线框，说明它是个包络外框
-            if (boundingRect(contours[child_idx]).area() > 50) { 
-                has_inner_box = true;
-                break;
+        // 只有 ID=1~3 需要严格的内框过滤，ID=9 开启宽松模式（不过滤）
+        if (class_id >= 1 && class_id <= 3) {
+            int child_idx = hierarchy[i][2];
+            while (child_idx != -1) {
+                if (boundingRect(contours[child_idx]).area() > 50) { 
+                    has_inner_box = true;
+                    break;
+                }
+                child_idx = hierarchy[child_idx][0];
             }
-            child_idx = hierarchy[child_idx][0]; // 检查下一个并列的子轮廓
         }
         
-        // 如果中间有其他框，直接过滤掉，我们不要外包络！
         if (has_inner_box) continue; 
         
-        // 选出“空心框”中，跨度面积最大的那个
         double size = boundingRect(contours[i]).area();
         if (size > max_size) { 
             max_size = size; 
@@ -1237,11 +1235,10 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
         }
     }
     
-    // 面积不能太小（排除死区噪点）
     if (target_contour.empty() || max_size < roi_frame.cols * roi_frame.rows * 0.1) return false;
 
     // ==========================================================
-    // 【核心升级3】：彻底抛弃 convexHull，直接在纯净内框上抓取四大极值点！
+    // 直接在纯净轮廓上抓取四大极值点（TL, TR, BR, BL）
     // ==========================================================
     Point2f tl = target_contour[0], tr = target_contour[0], br = target_contour[0], bl = target_contour[0];
     
@@ -1260,9 +1257,7 @@ bool findWallCorners(const Mat& roi_frame, std::vector<Point2f>& ordered_corners
         if (x - y < min_x_minus_y) { min_x_minus_y = x - y; bl = p; } 
     }
 
-    // 4. 将这 4 个点按 PnP 要求的顺序排列 (TL, TR, BR, BL)
     ordered_corners = {tl, tr, br, bl}; 
-    
     return true;
 }
 
@@ -1421,7 +1416,7 @@ private:
             current_yolo_res.objects.clear();
             
             ObjectMeta obj9;
-            obj9.bbox = Rect(20, 0, 800, 460); // 左侧20，上侧0，宽600，高500
+            obj9.bbox = Rect(40, 0, 800, 520); // 左侧20，上侧0，宽600，高500
             obj9.center = Point2f(obj9.bbox.x + obj9.bbox.width / 2.0f, obj9.bbox.y + obj9.bbox.height / 2.0f);
             obj9.class_id = 9;
             obj9.confidence = 1.0f; // 虚拟置信度 100%
@@ -1451,8 +1446,10 @@ private:
                             int px = std::max(0, std::min(raw_frame.cols - 1, (int)std::round(global_pt.x)));
                             int py = std::max(0, std::min(raw_frame.rows - 1, (int)std::round(global_pt.y)));
 
-                            // 只有当掩码不为空，且该坐标在掩码图上是有像素的（>0），才被认为是有效点
-                            if (!obj.ai_mask.empty() && obj.ai_mask.at<uchar>(py, px) > 0) {
+                            // ==========================================================
+                            // 【修正】：给 ID=9 开绿灯，只有 ID=0 才需要经过掩码严格校验
+                            // ==========================================================
+                            if (obj.class_id == 9 || (!obj.ai_mask.empty() && obj.ai_mask.at<uchar>(py, px) > 0)) {
                                 global_raw.push_back(global_pt);
                             } else {
                                 dropped_points++;
@@ -1463,7 +1460,7 @@ private:
                             cout << ">>> [二次级联] ID=" << obj.class_id << " | next.pt 原始点:" << raw_centers.size() 
                                  << " | 掩码过滤掉噪点:" << dropped_points 
                                  << " | 最终聚类有效特征点:" << obj.sub_centers.size() << endl;
-                                 
+
                             // 注意：只有 ID=0 才去做透视矩阵的角点修复
                         if (obj.class_id == 0 && obj.sub_centers.size() >= 4) {
                             bool perspective_fixed = false;
@@ -1500,24 +1497,67 @@ private:
                             // ==============================================================
                             // 动态场景分支：根据当前 Demo 的进度，应用不同的拓扑推导策略
                             // ==============================================================
+                            // ==============================================================
+                            // 动态场景分支：根据当前 Demo 的进度，应用不同的拓扑推导策略
+                            // ==============================================================
                             if (current_task.action_id == 0) {
-                                // 【DEMO000】：无遮挡理想状态，直接利用极值锁定四大外围角点
-                                Point2f P1 = pts[0], P4 = pts[0], P7 = pts[0], P10 = pts[0];
-                                float min_x_minus_y = 1e9;  // 找左下 (1号)
-                                float max_x_plus_y = -1e9;  // 找右下 (4号)
-                                float max_x_minus_y = -1e9; // 找右上 (7号)
-                                float min_x_plus_y = 1e9;   // 找左上 (10号)
-                                
-                                for (auto p : pts) {
-                                    if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }   // 1号点：X最小Y最大
-                                    if (p.x + p.y > max_x_plus_y)  { max_x_plus_y = p.x + p.y;  P4 = p; }   // 4号点：X最大Y最大
-                                    if (p.x - p.y > max_x_minus_y) { max_x_minus_y = p.x - p.y; P7 = p; }   // 7号点：X最大Y最小
-                                    if (p.x + p.y < min_x_plus_y)  { min_x_plus_y = p.x + p.y;  P10 = p; }  // 10号点：X最小Y最小
+                                if (pts.size() < 12) {
+                                    // 【DEMO000 遮挡/缺点分支】：点数少于12个
+                                    // 根据前提条件：1, 4, 5, 12 号点必然存活
+                                    Point2f P1 = pts[0], P4 = pts[0];
+                                    float min_x_minus_y = 1e9, max_x_plus_y = -1e9;
+                                    for (auto p : pts) {
+                                        if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }   // 1号点：X最小Y最大
+                                        if (p.x + p.y > max_x_plus_y)  { max_x_plus_y = p.x + p.y;  P4 = p; }   // 4号点：X最大Y最大
+                                    }
+                                    
+                                    // 利用 pushPoint 获取两侧的第二层点
+                                    Point2f P5 = pushPoint(P4, pts, 'U');
+                                    Point2f P12 = pushPoint(P1, pts, 'U');
+
+                                    // 【核心杀招】：构建单应性透视矩阵 (Homography)
+                                    // 我们把底座看作一个 3x3 的标准网格，建立物理坐标与像素坐标的映射关系
+                                    std::vector<Point2f> src_pts = { 
+                                        Point2f(0, 0),   // 对应 1号点 (左下)
+                                        Point2f(3, 0),   // 对应 4号点 (右下)
+                                        Point2f(3, 1),   // 对应 5号点 (右侧上一层)
+                                        Point2f(0, 1)    // 对应 12号点 (左侧上一层)
+                                    };
+                                    std::vector<Point2f> dst_pts = { P1, P4, P5, P12 };
+                                    Mat H = getPerspectiveTransform(src_pts, dst_pts);
+
+                                    // 利用透视矩阵，精准推算出 10号点 和 7号点 的像素坐标
+                                    // 在理想网格中，它们位于最顶层 (Y = 3)
+                                    std::vector<Point2f> target_src = { Point2f(0, 3), Point2f(3, 3) };
+                                    std::vector<Point2f> target_dst;
+                                    perspectiveTransform(target_src, target_dst, H);
+
+                                    Point2f P10 = target_dst[0]; // 左上角
+                                    Point2f P7 = target_dst[1];  // 右上角
+
+                                    final_corners = {P10, P7, P4, P1};
+                                    perspective_fixed = true;
+                                    cout << ">>> [DEMO000 缺点修补] 激活单应性透视推演：完美预测出具备真实透视畸变的 7/10 号角点！" << endl;
+
+                                } else {
+                                    // 【DEMO000 完美状态】：点数充足，直接利用极值锁定四大外围角点
+                                    Point2f P1 = pts[0], P4 = pts[0], P7 = pts[0], P10 = pts[0];
+                                    float min_x_minus_y = 1e9;  
+                                    float max_x_plus_y = -1e9;  
+                                    float max_x_minus_y = -1e9; 
+                                    float min_x_plus_y = 1e9;   
+                                    
+                                    for (auto p : pts) {
+                                        if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }   
+                                        if (p.x + p.y > max_x_plus_y)  { max_x_plus_y = p.x + p.y;  P4 = p; }   
+                                        if (p.x - p.y > max_x_minus_y) { max_x_minus_y = p.x - p.y; P7 = p; }   
+                                        if (p.x + p.y < min_x_plus_y)  { min_x_plus_y = p.x + p.y;  P10 = p; }  
+                                    }
+                                    
+                                    final_corners = {P10, P7, P4, P1};
+                                    perspective_fixed = true;
+                                    cout << ">>> [DEMO000 四角锁定] 点数充足，成功直接提取 1/4/7/10 号角点！" << endl;
                                 }
-                                
-                                final_corners = {P10, P7, P4, P1};
-                                perspective_fixed = true;
-                                cout << ">>> [DEMO000 四角锁定] 成功直接提取 1/4/7/10 号角点，杜绝推导误差！" << endl;
                             }
                             else if (current_task.action_id == 1) {
                                 // 【DEMO001】：1号点被挡，找右下角的点为4号点，逆向推导
@@ -1662,11 +1702,11 @@ private:
                             }
 
                             // 生成虚拟紧凑框并执行四向膨胀
-                            // 以 P1(左下) 和 P4(右下) 为基准：上移20，左移60，下移40，右不变 (像素)
+                            // 以 P1(左下) 和 P4(右下) 为基准：上移8像素，左移60，下移40，右侧右移20 (像素)
                             int new_x = P1.x - 60;
-                            int new_y = P1.y - 20;
-                            int new_w = (P4.x - P1.x) + 60;      
-                            int new_h = (P4.y - P1.y) + 20 + 40; 
+                            int new_y = P1.y - 8;                         // 【修改】：上侧往上移 8 像素
+                            int new_w = (P4.x - P1.x) + 60 + 20;          
+                            int new_h = (P4.y - P1.y) + 40 + 8;           //
 
                             obj.bbox = Rect(new_x, new_y, new_w, new_h);
                             cout << ">>> [极简极值锁定] ID=9 已成功锁定 1号点与 4号点，外扩生成虚拟选区！" << endl;
@@ -1702,9 +1742,9 @@ private:
                 }
                 else {
                     Mat roi_frame = raw_frame(safe_bbox); std::vector<Point2f> local_corners;
-                    feature_extracted = (obj.class_id >= 1 && obj.class_id <= 3) ? 
-                                        findWallCorners(roi_frame, local_corners, obj.roi_mask) : 
-                                        findOrderedCorners(roi_frame, obj.class_id, local_corners, obj.roi_mask);
+                    feature_extracted = (obj.class_id >= 1 && obj.class_id <= 3 || obj.class_id == 9) ? 
+                                    findWallCorners(roi_frame, local_corners, obj.roi_mask, obj.class_id) : 
+                                    findOrderedCorners(roi_frame, obj.class_id, local_corners, obj.roi_mask);
                     if (feature_extracted) {
                         std::vector<Point2f> global_corners(4);
                         for(int i=0; i<4; i++) global_corners[i] = Point2f(safe_bbox.x + local_corners[i].x, safe_bbox.y + local_corners[i].y);
@@ -1829,7 +1869,7 @@ public:
         GaussianBlur(gray, blurred, Size(9, 9), 0);
         
         // 这个值(60)代表对黑色的敏感度，如果画面里胶带偏灰，可以调大；如果环境很暗，可以调小(如40)
-        int black_thresh = 110; 
+        int black_thresh = 120; 
         threshold(blurred, binary, black_thresh, 255, THRESH_BINARY_INV);
         
         // 填补胶带上可能存在的细小灰尘点或缝隙
@@ -1903,7 +1943,7 @@ public:
                 }
             }
         }
-        putText(raw_frame, "AUTO_CAM ALIGNING...", Point(15, 40), FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 3);
+        putText(raw_frame, "AUTO_CAM ALIGNING (EDGE)...", Point(15, 40), FONT_HERSHEY_SIMPLEX, 1.0, Scalar(0, 165, 255), 3);
         rectangle(raw_frame, roi_rect, Scalar(255, 0, 0), 2); 
     }
 
@@ -1969,16 +2009,48 @@ public:
 
             int pip_offset_y = 10;
             for (const auto& obj : current_yolo_res.objects) {
-                if (!obj.roi_mask.empty() && obj.class_id != 9 ) {
-                    Mat mask_bgr; cvtColor(obj.roi_mask, mask_bgr, COLOR_GRAY2BGR);
-                    Rect pip_rect(10, pip_offset_y, mask_bgr.cols, mask_bgr.rows); pip_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
-                    if(pip_rect.area() > 0) {
-                        mask_bgr(Rect(0, 0, pip_rect.width, pip_rect.height)).copyTo(raw_frame(pip_rect));
-                        rectangle(raw_frame, pip_rect, Scalar(0, 255, 0), 2);
-                        string pip_text = "ID:" + to_string(obj.class_id) + " Mask";
-                        putText(raw_frame, pip_text, Point(10, pip_rect.y + pip_rect.height + 15), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 0), 2);
+                if (!obj.roi_mask.empty()) {
+                    Mat mask_bgr; 
+                    cvtColor(obj.roi_mask, mask_bgr, COLOR_GRAY2BGR);
+                    
+                    if (obj.class_id != 9) {
+                        // ==========================================
+                        // 原有逻辑：ID=1~3 的图画在【左上角】，向下排列
+                        // ==========================================
+                        Rect pip_rect(10, pip_offset_y, mask_bgr.cols, mask_bgr.rows); 
+                        pip_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
+                        
+                        if(pip_rect.area() > 0) {
+                            mask_bgr(Rect(0, 0, pip_rect.width, pip_rect.height)).copyTo(raw_frame(pip_rect));
+                            rectangle(raw_frame, pip_rect, Scalar(0, 255, 0), 2);
+                            string pip_text = "ID:" + to_string(obj.class_id) + " Mask";
+                            putText(raw_frame, pip_text, Point(10, pip_rect.y + pip_rect.height + 15), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 255, 0), 2);
+                        }
+                        pip_offset_y += pip_rect.height + 25; 
+                    } 
+                    else {
+                        // ==========================================
+                        // 新增逻辑：ID=9 (DEMO091) 的图画在【右下角】
+                        // ==========================================
+                        int margin = 20; // 距离边缘的留白
+                        int br_x = raw_frame.cols - mask_bgr.cols - margin;
+                        int br_y = raw_frame.rows - mask_bgr.rows - margin;
+                        
+                        // 防止出界
+                        br_x = std::max(0, br_x);
+                        br_y = std::max(0, br_y);
+                        
+                        Rect pip_rect(br_x, br_y, mask_bgr.cols, mask_bgr.rows); 
+                        pip_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
+                        
+                        if(pip_rect.area() > 0) {
+                            mask_bgr(Rect(0, 0, pip_rect.width, pip_rect.height)).copyTo(raw_frame(pip_rect));
+                            rectangle(raw_frame, pip_rect, Scalar(0, 255, 255), 2); // 用黄色边框区分
+                            string pip_text = "DEMO091 Canny Edges";
+                            // 文字写在框的上方
+                            putText(raw_frame, pip_text, Point(pip_rect.x, pip_rect.y - 10), FONT_HERSHEY_SIMPLEX, 0.6, Scalar(0, 255, 255), 2);
+                        }
                     }
-                    pip_offset_y += pip_rect.height + 25; 
                 }
             }
         }
