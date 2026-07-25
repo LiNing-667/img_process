@@ -9,15 +9,15 @@
 #include <unistd.h>
 
 // 引入各个子模块
-#include "config.h"
-#include "types.h"
-#include "global_state.h"
-#include "serial_driver.h"
-#include "camera_driver.h"
-#include "pilot_comm.h"
-#include "cmd_gateway.h"
-#include "network_server.h"
-#include "vision_engine.h"
+#include "config.h"  // 全局系统配置常量
+#include "types.h"   // 系统核心数据结构定义
+#include "global_state.h"  // 全局变量声明 (Extern)
+#include "serial_driver.h" // 系统信号和串口初始化
+#include "camera_driver.h" // 摄像头硬件抽象层与推流线程
+#include "pilot_comm.h"    // 往 Pilot 板下发宏指令
+#include "cmd_gateway.h"   // 指令网关与接收线程 (包含写定的工作流)
+#include "network_server.h" // 网络服务与上位机图传协议层
+#include "vision_engine.h"  //核心业务状态机与任务管线
 
 using namespace cv;
 using namespace std;

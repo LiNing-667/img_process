@@ -1,3 +1,7 @@
+/**
+ * @file vision_engine.h
+ * @brief 核心业务状态机与任务管线
+ */
 #pragma once
 #include "types.h"
 #include "pilot_comm.h"
