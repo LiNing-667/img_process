@@ -50,13 +50,15 @@ target_link_libraries(MonitorApp PRIVATE
 )
 
 # ==========================================
-# 编译 PilotApp (机械臂网络控制端) - 保持原样不动
+# 编译 PilotApp (机械臂网络控制端)
 # ==========================================
-# 注意路径要带上 src/
-add_executable(PilotApp src/pilot.cpp src/ik_solver.c)
+file(GLOB PILOT_SRCS "pilot/*.cpp")
 
-# 链接 PilotApp 所需的系统库
-# PilotApp 不需要 OpenCV，所以只需链接多线程(Threads)和数学库(m)
+add_executable(PilotApp ${PILOT_SRCS} src/ik_solver.c)
+
+# 头文件查找路径，支持找到新拆分的 .h
+target_include_directories(PilotApp PRIVATE "${CMAKE_SOURCE_DIR}/src/pilot")
+
 target_link_libraries(PilotApp PRIVATE
     Threads::Threads
     m
