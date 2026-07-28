@@ -24,6 +24,8 @@ private:
     void handleSingleAxisServo(const DemoTask &current_task, cv::Mat &raw_frame);
     bool handleBlindOperations(const DemoTask &current_task);
     bool handleYoloAndPnP(const DemoTask &current_task, cv::Mat &raw_frame);
+    void handleHsvFindOneshot(const DemoTask &task, cv::Mat &raw_frame);
+    void handleCheck091(cv::Mat &raw_frame);
 
 public:
     VisionEngine(PilotCommunicator &comm);

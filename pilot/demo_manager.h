@@ -15,13 +15,16 @@ namespace DemoManager {
     void executeDemo031(float px, float py, float pz);
     void executeDemo131(float px, float py, float pz);
     void executeDemo132(float px, float py, float pz);
+    void executeDemo130(float px, float py, float pz);
+    void executeDemo030(float px, float py, float pz);
     void executeDemo121(float px, float py, float pz);
     void executeDemo122(float px, float py, float pz);
     void executeDemo041(float px, float py, float pz);
     void executeDo001();
     void executeDo031();
-    void executeDo002();
     void executeDemo091(float px, float py, float pz);
+    void executeDemo092(float px, float py, float pz);
+    void executeDemo093(float px, float py, float pz);
     void executeDemo102(float px, float py, float pz);
     void executeDemo002(float px, float py, float pz);
     void executeDemo220();

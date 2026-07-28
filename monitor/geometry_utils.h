@@ -21,8 +21,8 @@ std::vector<cv::Point2f> clusterPoints(const std::vector<cv::Point2f> &raw_pts, 
 class HandEyeCalibrator
 {
 private:
-    double tx_[2] = {-2.40, -2.60};
-    double ty_[2] = {91.0, -91.0};
+    double tx_[2] = {-40.00, -52.60}; // {-2.40, -2.60}; 偏前就减
+    double ty_[2] = {78.0, -120.0}; // {91.0, -91.0}; 偏外就放大
     double tz_[2] = {205.0, 205.0};
     double rx_[2] = {0.0, 0.0};
     double ry_[2] = {0.0, 0.0};

@@ -93,6 +93,14 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         std::cout << "[Pilot] DEMO132" << std::endl;
         DemoManager::executeDemo132(px, py, pz);
     }
+    else if (strcmp(cmd, "DEMO130") == 0) {
+        std::cout << "[Pilot] DEMO130" << std::endl;
+        DemoManager::executeDemo130(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO030") == 0) {
+        std::cout << "[Pilot] DEMO030" << std::endl;
+        DemoManager::executeDemo030(px, py, pz);
+    }
     else if (strcmp(cmd, "DEMO121") == 0) {
         std::cout << "[Pilot] DEMO131" << std::endl;
         DemoManager::executeDemo131(px, py, pz);
@@ -113,10 +121,6 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         std::cout << "[Pilot] DO031" << std::endl;
         DemoManager::executeDo031();
     }
-    else if (strcmp(cmd, "DO002") == 0) {
-        std::cout << "[Pilot] DO002" << std::endl;
-        DemoManager::executeDo002();
-    }
     else if (strcmp(cmd, "DEMO102") == 0) {
         std::cout << "[Pilot] DEMO102" << std::endl;
         DemoManager::executeDemo102(px, py, pz);
@@ -128,6 +132,12 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     else if (strcmp(cmd, "DEMO091") == 0) {
         std::cout << "[Pilot] DEMO091" << std::endl;
         DemoManager::executeDemo091(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO092") == 0) {
+        DemoManager::executeDemo092(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO093") == 0) {
+        DemoManager::executeDemo093(px, py, pz);
     }
     else if (strcmp(cmd, "CHASSIS_MOVE") == 0) {
         std::cout << "\n>>> [Pilot] 收到find移动指令 CHASSIS_MOVE" << std::endl;
@@ -144,7 +154,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
             int target_arm = (channel >= 7) ? 1 : 0;
             float calibrated_angle = py;
             if (target_arm == 0) {
-                if (channel == 0) calibrated_angle = py + 20.0f;
+                if (channel == 0) calibrated_angle = py + 5.0f;
                 else if (channel == 1) calibrated_angle = py + 30.0f;
                 else if (channel == 2) calibrated_angle = py + 20.0f;
                 else if (channel == 3) calibrated_angle = py + 20.0f;
@@ -157,7 +167,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
                 else if (channel == 11) calibrated_angle = py + 18.0f;
                 else if (channel == 12) calibrated_angle = py + 18.0f;
                 else if (channel == 13) calibrated_angle = py + 18.0f;
-                else if (channel == 14) calibrated_angle = py - 55.0f;
+                else if (channel == 14) calibrated_angle = py - 65.0f;
                 else if (channel == 7) {
                     calibrated_angle = py;
                     g_arm.notifyCameraManualSet(7, calibrated_angle); 

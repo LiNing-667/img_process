@@ -38,14 +38,39 @@ void processTextCommand(const std::string &cmd_line)
         std::cout << "\n>>> [自适应云台] 启动！开始提取车板特征曲线..." << std::endl;
         return;
     }
-    if (lower_cmd == "find")
+
+    // 拦截 findx (例如 find1, find2)
+    if (lower_cmd.rfind("find", 0) == 0 && lower_cmd.length() == 5)
     {
-        std::cout << "\n>>> [状态机] 启动巡航搜索，下发云台就位指令 DEMO220..." << std::endl;
-        if (g_serial_fd >= 0)
-        {
-            std::string send_str = "DEMO220 0 0 0 0 0 0 0 0 0 0\r\n";
-            write(g_serial_fd, send_str.c_str(), send_str.length());
-        }
+        int target_id = lower_cmd[4] - '0';
+        std::cout << "\n>>> [状态机] 启动单帧寻物流 (锁定ID=" << target_id << ")..." << std::endl;
+
+        // 开启独立线程，专门用来等云台到位，绝对不卡死主图像管线
+        std::thread([target_id]() {
+            // 1. 获取 Nod 记忆角度 (如果没 Nod 过，给个默认兜底)
+            if (g_calibrated_pan < 0 || g_calibrated_tilt < 0) {
+                g_calibrated_pan = 113.0f; g_calibrated_tilt = 45.0f;
+            }
+
+            // 2. 摄像头转到特定姿态 (水平维持 nod，向下绝对角度 30 度)
+            if (g_serial_fd >= 0) {
+                char buf[64];
+                sprintf(buf, "CAM %.1f 30.0\r\n", g_calibrated_pan);
+                write(g_serial_fd, buf, strlen(buf));
+            }
+
+            // 3. 闭眼等待云台转动及画面完全稳定
+            usleep(1500000); 
+
+            // 4. 下发单帧视觉处理任务给 VisionEngine
+            {
+                std::lock_guard<std::mutex> lock(g_task_mtx);
+                g_demo_task.pending = true;
+                g_demo_task.raw_cmd = "HSV_FIND_ONESHOT";
+                g_demo_task.class_id = target_id; // 传递 x 的 ID 给 PNP
+                g_demo_task.arm_id = 1;           // 强制在 ARM1 参考系下结算
+            }
+        }).detach();
         return;
     }
 
@@ -220,6 +245,13 @@ void serialReadThreadFunc()
                     std::lock_guard<std::mutex> lock(g_task_mtx);
                     g_demo_task.pending = true;
                     g_demo_task.raw_cmd = line;
+                }
+                else if (line.rfind("CHECK_091", 0) == 0)
+                {
+                    std::cout << "\n[Monitor 接收] 收到右臂悬空信号，开始视觉验核！" << std::endl;
+                    std::lock_guard<std::mutex> lock(g_task_mtx);
+                    g_demo_task.pending = true;
+                    g_demo_task.raw_cmd = "CHECK_091";
                 }
                 else if (line.rfind("CHASSIS_DONE", 0) == 0)
                 {

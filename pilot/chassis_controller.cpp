@@ -213,6 +213,45 @@ void ChassisController::emergencyStop() {
 void ChassisController::setAbsoluteTarget(float x_cm, float y_cm) { target_x_ = x_cm * 10.0f; target_y_ = y_cm * 10.0f; }
 
 void ChassisController::moveRelative(float dx_cm, float dy_cm) {
+    // 1. 计算直线直线距离
+    float dist = std::sqrt(dx_cm * dx_cm + dy_cm * dy_cm);
+
+    // 2. 小距离微调分支 (阈值设为 5.0 厘米，可以根据实车情况调整)
+    if (dist > 0.1f && dist <= 10.0f) {
+        std::cout << "[Chassis] 距离小 (" << dist << "cm)，启动开环微动补偿！" << std::endl;
+        
+        // 开启一个独立线程执行短促的开环脉冲，防止阻塞主串口接收
+        std::thread([this, dx_cm, dy_cm, dist]() {
+            // 设置一个能绝对克服静摩擦力的基础速度 (建议在 150~250 之间)
+            float kick_speed = 200.0f; 
+            
+            // 估算时间：假设速度200对应约 15cm/s，那么 1cm 大概需要 0.066 秒
+            // 这里的 15.0f 是基准标定值，你可以根据小车实际爆发速度微调
+            float time_sec = dist / 15.0f; 
+            int sleep_us = (int)(time_sec * 1000000);
+
+            // 计算 X 和 Y 方向的速度分量
+            float dir_x = dx_cm / dist;
+            float dir_y = dy_cm / dist;
+
+            // 切入速度直控模式，爆发起步
+            setVelocity(dir_x * kick_speed, dir_y * kick_speed, 0.0f);
+            
+            // 延时等待行驶完成
+            usleep(sleep_us);
+            
+            // 紧急刹车并退出速度模式
+            stopVelocity();
+            
+            // 同步刷新 PID 的目标靶点，防止切回 PID 后发生反向回调
+            target_x_ = curr_x_.load();
+            target_y_ = curr_y_.load();
+        }).detach();
+        
+        return; // 小距离处理完毕，直接返回，不再执行后续 PID
+    }
+
+    // 3. 常规大距离 PID 逻辑 (保持原样)
     float cy = std::cos(curr_yaw_.load());
     float sy = std::sin(curr_yaw_.load());
     float dx_mm = dx_cm * 10.0f, dy_mm = dy_cm * 10.0f;

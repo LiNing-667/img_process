@@ -25,8 +25,9 @@ extern "C" {
 #define RAD2DEG(rad) ((rad) * 180.0f / (float)M_PI)
 
 /* ---------- DH 参数（单位 cm） ---------- */
-#define X_01   5.0f
-#define X_23  14.6f
+#define Z_01   2.1f  
+#define X_01   7.8f
+#define X_23  15.7f
 #define Z_45   9.5f
 #define Z_56   3.0f
 #define X_56   5.0f

@@ -83,7 +83,7 @@ void VisionEngine::handleClosedLoopCheck(const DemoTask &current_task, Mat &raw_
         int next_arm = trans.success_cmd[4] - '0';
         Pose6D next_pose = calibrator.transform(g_cl_state.last_rvec, g_cl_state.last_tvec, next_arm);
         next_pose.x /= -10.0; next_pose.y /= -10.0; next_pose.z /= -10.0;
-        next_pose.x += g_global_x_offset_cm;
+        next_pose.x += g_arm_x_offset_cm[next_arm];
         g_cl_state.last_pose = next_pose;
         pilot_comm.sendDemoCommand(trans.success_cmd, next_pose);
     }
@@ -136,7 +136,14 @@ void VisionEngine::handleSingleAxisServo(const DemoTask &current_task, Mat &raw_
         double tz_mm = g_cl_state.last_tvec.at<double>(2);
         float dynamic_scale_cm = (float)(tz_mm / 7053.0);
         float delta_x_cm = (obj_center.y - aruco_center.y) * dynamic_scale_cm;
-        g_global_x_offset_cm += delta_x_cm; // 将本次算出的误差，累加到全局补偿系统中
+        //g_global_x_offset_cm += delta_x_cm; // 将本次算出的误差，累加到全局补偿系统中
+
+        // 从指令如 "FIX_131" 的第 4 位提取机械臂 ID，默认 fallback 到 ARM1
+        int target_arm = (current_task.raw_cmd.length() > 4) ? (current_task.raw_cmd[4] - '0') : 1;
+        if (target_arm != 0 && target_arm != 1) target_arm = 1;
+        
+        g_arm_x_offset_cm[target_arm] += delta_x_cm; // 独立累加到各自的补偿系统中
+
         float calibrated_px = g_cl_state.last_pose.x + delta_x_cm;
         std::cout << "\n>>> [视觉对齐成功] PnP 深度提取: Tz=" << tz_mm << "mm | 动态比例尺: " << dynamic_scale_cm << " cm/px" << std::endl;
         std::cout << ">>> ArUco纵向: " << aruco_center.y << " | 物体纵向: " << obj_center.y << std::endl;
@@ -169,7 +176,7 @@ bool VisionEngine::handleBlindOperations(const DemoTask &current_task)
             cout << ">>> [视觉记忆跳跃] 检测到单独下发 " << current_task.raw_cmd << "，调用物理矩阵跳过 YOLO！" << endl;
             Pose6D arm0_pose = calibrator.transform(g_cl_state.last_rvec, g_cl_state.last_tvec, 0);
             arm0_pose.x /= -10.0; arm0_pose.y /= -10.0; arm0_pose.z /= -10.0;
-            arm0_pose.x += g_global_x_offset_cm;
+            arm0_pose.x += g_arm_x_offset_cm[0]; // DEMO004 专属 ARM0
             g_cl_state.last_pose = arm0_pose;
             pilot_comm.sendDemoCommand(current_task.raw_cmd, arm0_pose);
             return true;
@@ -826,7 +833,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                         arm_target_pose.x /= -10.0;
                         arm_target_pose.y /= -10.0;
                         arm_target_pose.z /= -10.0;
-                        arm_target_pose.x += g_global_x_offset_cm;
+                        arm_target_pose.x += g_arm_x_offset_cm[current_task.arm_id];
 
                         if ((current_task.raw_cmd == "DEMO101" || current_task.raw_cmd == "DEMO102") && obj.corners_2d.size() == 4)
                         {
@@ -840,6 +847,15 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
 
                         cout << ">>> [坐标转化完成] 发现目标物体 ID: " << obj.class_id << "\n    下发串口指令 -> " << current_task.raw_cmd
                              << " 移动至: X=" << arm_target_pose.x << " Y=" << arm_target_pose.y << " Z=" << arm_target_pose.z << " (厘米)" << endl;
+                        
+                             // 【新增】：如果是 DEMO091，把框和坐标存下来供闭环使用
+                        if (current_task.raw_cmd == "DEMO091") {
+                            g_cache_091_bbox = safe_bbox;
+                            g_cache_091_px = arm_target_pose.x;
+                            g_cache_091_py = arm_target_pose.y;
+                            g_cache_091_pz = arm_target_pose.z;
+                        }
+
                         pilot_comm.sendDemoCommand(current_task.raw_cmd, arm_target_pose);
                         target_found = true;
                         break;
@@ -854,6 +870,16 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
 
 void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
 {
+    // ================== 新增路由 ==================
+    if (task.raw_cmd == "HSV_FIND_ONESHOT")
+    {
+        handleHsvFindOneshot(task, raw_frame);
+        return;
+    }
+    if (task.raw_cmd == "CHECK_091") {
+        handleCheck091(raw_frame);
+        return;
+    }
     // 处理巡航寻找逻辑
     if (task.raw_cmd.rfind("FIND_ACK_", 0) == 0)
     {
@@ -979,7 +1005,10 @@ void VisionEngine::processAutoCamera(Mat &raw_frame)
         if (tilt_ok && pan_ok)
         {
             g_auto_cam_running = false;
-            std::cout << "\n>>> [自适应云台] 校准完美！落点 -> Pan: " << g_cam_pan << " Tilt: " << g_cam_tilt << std::endl;
+            // 记录下当前完美的基准角度
+            g_calibrated_pan = g_cam_pan;
+            g_calibrated_tilt = g_cam_tilt;
+            std::cout << "\n>>> [自适应云台] 校准完美并已记忆！落点 -> Pan: " << g_calibrated_pan << " Tilt: " << g_calibrated_tilt << std::endl;
         }
         else
         {
@@ -1132,5 +1161,232 @@ void VisionEngine::renderOsd(Mat &raw_frame)
                 pip_offset_y += pip_rect.height + 25;
             }
         }
+    }
+}
+
+void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
+{
+    cout << ">>> [单帧寻物] 图像就绪，开始 HSV 提取与 PNP (ID=" << task.class_id << ")..." << endl;
+    
+    Mat hsv, mask;
+    cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
+    
+    // 提取蓝色 HSV 范围 
+    inRange(hsv, Scalar(100, 100, 50), Scalar(130, 255, 255), mask);
+    Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+    morphologyEx(mask, mask, MORPH_OPEN, kernel);
+    morphologyEx(mask, mask, MORPH_CLOSE, kernel);
+
+    vector<vector<Point>> contours;
+    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+    int best_idx = -1;
+    float min_dist = 1e9;
+    Point2f img_center(raw_frame.cols / 2.0f, raw_frame.rows / 2.0f);
+
+    for (size_t i = 0; i < contours.size(); i++) {
+        if (contourArea(contours[i]) < 400) continue; // 过滤极小噪点
+        Rect rect = boundingRect(contours[i]);
+        Point2f center(rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f);
+        
+        // 在图传画面中用红点点出中心
+        circle(raw_frame, center, 6, Scalar(0, 0, 255), -1); 
+        
+        // 选中最接近画面中心的那一个
+        float dist = norm(center - img_center);
+        if (dist < min_dist) { min_dist = dist; best_idx = i; }
+    }
+
+    if (best_idx != -1) {
+        // 回退到使用最小外接矩形 (RotatedRect)，抗远距离模糊能力更强
+        RotatedRect rrect = minAreaRect(contours[best_idx]);
+        Point2f pts[4];
+        rrect.points(pts);
+        
+        // 矩形四角排序以适配 3D 模型的物理点位顺序 (左上、右上、右下、左下)
+        std::vector<Point2f> corners(pts, pts + 4);
+        std::vector<Point2f> top, bot;
+        std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b) { return a.y < b.y; });
+        top.push_back(corners[0]); top.push_back(corners[1]);
+        bot.push_back(corners[2]); bot.push_back(corners[3]);
+        if (top[0].x > top[1].x) std::swap(top[0], top[1]);
+        if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
+
+        // ==========================================================
+        // 【核心修正】：削平 ID=1~4 顶部的“犄角”，下压 10% 还原真实物理高度
+        // ==========================================================
+        if (task.class_id >= 1 && task.class_id <= 4) {
+            float height_left = bot[0].y - top[0].y;
+            float height_right = bot[1].y - top[1].y;
+            
+            // 将顶部的两个角点向下平移自身高度的 10%
+            top[0].y += height_left * 0.10f;
+            top[1].y += height_right * 0.10f;
+            
+            cout << ">>> [特征修正] ID=" << task.class_id << " 发现顶部突起，角点已下压 10% 还原主体尺寸！" << endl;
+        }
+
+        corners = {top[0], top[1], bot[1], bot[0]};
+
+        // 【UI】画出高精度提取的真实角点连线 (特意换成紫色 255,0,255，便于你在图传里核对)
+        for (int i = 0; i < 4; i++) {
+            line(raw_frame, corners[i], corners[(i + 1) % 4], Scalar(255, 0, 255), 2);
+        }
+
+        // 获取对应的 3D std::vector<Point2f> corners(pts物理尺寸并进行 PnP 位姿解算
+        std::vector<Point3f> obj_pts_3d = get3DModelPoints(task.class_id);
+        Mat rvec, tvec;
+        if (solvePnP(obj_pts_3d, corners, CAMERA_MATRIX, DIST_COEFFS, rvec, tvec, false, cv::SOLVEPNP_ITERATIVE)) {
+            
+            // --- 补偿镜头抬头 15 度带来的坐标系偏差 ---
+            double theta = 15.0 * CV_PI / 180.0; 
+            Mat R_pitch_comp = (Mat_<double>(3, 3) << 
+                1, 0, 0, 
+                0, cos(theta), -sin(theta), 
+                0, sin(theta), cos(theta));
+            
+            Mat R_cam;
+            cv::Rodrigues(rvec, R_cam);
+            R_cam = R_pitch_comp * R_cam;
+            tvec = R_pitch_comp * tvec;
+            cv::Rodrigues(R_cam, rvec);
+            // ------------------------------------------
+
+            // 空间转换到 ARM1 坐标系下
+            Pose6D arm1_pose = calibrator.transform(rvec, tvec, 1);
+            arm1_pose.x /= -10.0; arm1_pose.y /= -10.0; arm1_pose.z /= -10.0;
+            arm1_pose.x += g_arm_x_offset_cm[1]; // 专属 ARM1
+
+            float px = arm1_pose.x;
+            float py = arm1_pose.y;
+            cout << ">>> [单帧寻物] HSV 外框 PnP 解析成功 | 位于 ARM1_X: " << px << " cm, ARM1_Y: " << py << " cm" << endl;
+
+            // ===== 底盘移动核心解算逻辑 =====
+            float target_x = -20.0f;
+            float target_y = 8.0f;
+            float forward_cm = target_x - px; 
+            float right_cm = py - target_y;   
+            
+            cout << ">>> [底盘调度] 需前进 " << forward_cm << " cm, 需向右 " << right_cm << " cm" << endl;
+
+            if (g_serial_fd >= 0) {
+                char buf[128];
+                // Y轴补偿：前后移动
+                if (abs(forward_cm) > 0.5f) {
+                    if (forward_cm > 0) sprintf(buf, "MW %.1f\r\n", forward_cm);
+                    else sprintf(buf, "MS %.1f\r\n", -forward_cm);
+                    write(g_serial_fd, buf, strlen(buf));
+                    usleep(30000); // 防串口粘包
+                }
+                // X轴补偿：左右平移
+                if (abs(right_cm) > 0.5f) {
+                    if (right_cm > 0) sprintf(buf, "MD %.1f\r\n", right_cm);
+                    else sprintf(buf, "MA %.1f\r\n", -right_cm);
+                    write(g_serial_fd, buf, strlen(buf));
+                }
+            }
+        } else {
+            cout << ">>> [单帧寻物] PnP 矩阵收敛失败！" << endl;
+        }
+    } else {
+        cout << ">>> [单帧寻物] 致命：画面中心周围完全没有蓝色目标！" << endl;
+    }
+
+    // 无论最终结果如何，看完最后一眼立刻把云台归位到 Nod 的位置
+    if (g_serial_fd >= 0 && g_calibrated_pan >= 0) {
+        char buf[64];
+        sprintf(buf, "CAM %.1f %.1f\r\n", g_calibrated_pan, g_calibrated_tilt);
+        write(g_serial_fd, buf, strlen(buf));
+        cout << ">>> [单帧寻物] 流程收尾：云台已复位至 Nod (Pan:" << g_calibrated_pan << ", Tilt:" << g_calibrated_tilt << ")" << endl;
+    }
+}
+
+void VisionEngine::handleCheck091(Mat &raw_frame)
+{
+    if (g_cache_091_bbox.area() <= 0) {
+        cout << ">>> [视觉闭环] 无效的 DEMO091 缓存框！" << endl;
+        return;
+    }
+
+    // ==========================================================
+    // 【修改 1】：截取最右侧 1/3 区域，并在宽度上额外向右侧外扩 80 个像素
+    // ==========================================================
+    Rect right_roi = g_cache_091_bbox;
+    right_roi.x = right_roi.x + right_roi.width * 2 / 3;
+    right_roi.width = (right_roi.width / 3) + 80; 
+    
+    // 依然保留安全裁剪，防止这多出来的 80 像素超出了图像真实边界导致程序崩溃
+    right_roi &= Rect(0, 0, raw_frame.cols, raw_frame.rows); 
+
+    if (right_roi.area() <= 0) return;
+
+    Mat roi = raw_frame(right_roi);
+    
+    // ==========================================================
+    // 2. 进阶版：HSV 饱和度与明度双通道融合边缘提取
+    // ==========================================================
+    Mat hsv;
+    cvtColor(roi, hsv, COLOR_BGR2HSV);
+
+    // 将 HSV 图像分离为 H, S, V 三个独立的单通道图像
+    vector<Mat> hsv_channels;
+    split(hsv, hsv_channels);
+
+    Mat edges_s, edges_v, edges;
+
+    // 对饱和度 (S - hsv_channels[1]) 提取边缘：对颜色边界极度敏感
+    Canny(hsv_channels[1], edges_s, 10, 30);
+
+    // 对明度 (V - hsv_channels[2]) 提取边缘：对物理阴影和缝隙极度敏感
+    Canny(hsv_channels[2], edges_v, 10, 30);
+
+    // 融合两种边缘：只要颜色突变或亮度突变，统统作为有效边缘！
+    bitwise_or(edges_s, edges_v, edges);
+
+    // 3. 霍夫直线变换
+    vector<Vec4i> lines;
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, right_roi.height * 0.6, 10);
+
+    // 4. 筛选并聚类竖直长线 (防止同一条粗边被识别成好几条线)
+    std::vector<int> valid_x_centers;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        Vec4i l = lines[i];
+        float angle = atan2(abs(l[3] - l[1]), abs(l[2] - l[0])) * 180.0 / CV_PI;
+        float length = norm(Point(l[0], l[1]) - Point(l[2], l[3]));
+
+        // 判定条件：角度在 75~105 度之间，长度 >= ROI 高度的 60%
+        if (angle > 75.0 && angle < 105.0 && length >= right_roi.height * 0.6) {
+            int cx = (l[0] + l[2]) / 2;
+            bool merged = false;
+            // X轴聚类：相距 10 像素以内的线段认为是同一条边
+            for (int &existing_x : valid_x_centers) {
+                if (abs(cx - existing_x) < 10) { merged = true; break; }
+            }
+            if (!merged) {
+                valid_x_centers.push_back(cx);
+                // 【UI】在画面上画出识别到的长红线
+                line(raw_frame, Point(right_roi.x + l[0], right_roi.y + l[1]), 
+                                Point(right_roi.x + l[2], right_roi.y + l[3]), Scalar(0, 0, 255), 3);
+            }
+        }
+    }
+
+    int vertical_line_count = valid_x_centers.size();
+    cout << ">>> [视觉闭环] 扫描右侧边缘，发现独立竖直长线数量: " << vertical_line_count << endl;
+
+    // 【UI】画出扫描区域的蓝框 (可以看到这比原来的 1/3 框多出了 50 像素)
+    rectangle(raw_frame, right_roi, Scalar(255, 255, 0), 2);
+
+    // 5. 闭环决策分发
+    if (vertical_line_count >= 2) {
+        g_cache_091_px += 0.5f; // 参数X加0.5
+        Pose6D adj_pose = { g_cache_091_px, g_cache_091_py, g_cache_091_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] 未卡平 (竖线≥2)！下发微调指令 DEMO092 (X=" << g_cache_091_px << ")" << endl;
+        pilot_comm.sendDemoCommand("DEMO092", adj_pose);
+    } else {
+        Pose6D adj_pose = { g_cache_091_px, g_cache_091_py, g_cache_091_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] 卡紧完毕 (竖线<2)！触发装配收尾指令 DEMO093" << endl;
+        pilot_comm.sendDemoCommand("DEMO093", adj_pose);
     }
 }

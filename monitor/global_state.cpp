@@ -21,4 +21,13 @@ float g_cam_tilt = 50.0f;
 
 std::atomic<bool> g_wf_chassis_done{false};
 std::atomic<bool> g_wf_find_failed{false};
-float g_global_x_offset_cm = 0.0f;
+float g_arm_x_offset_cm[2] = {0.0f, 0.0f};
+
+float g_calibrated_pan = -1.0f;
+float g_calibrated_tilt = -1.0f;
+std::atomic<bool> g_hsv_find_running{false};
+
+cv::Rect g_cache_091_bbox(0, 0, 0, 0);
+float g_cache_091_px = 0.0f;
+float g_cache_091_py = 0.0f;
+float g_cache_091_pz = 0.0f;

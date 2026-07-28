@@ -129,14 +129,14 @@ static void forward_kinematics(const float th_deg[6], float pos[3], float R[3][3
     };
 
     /* T1 */
-    DH_transform(0.0f, 0.0f, th_deg[0], X_01, T);
+    DH_transform(0.0f, Z_01, th_deg[0], X_01, T);
     mat4_mult(T_acc, T, T_next);
     memcpy(T_acc, T_next, sizeof(T_acc));
     /* T2 */
     DH_transform(90.0f, 0.0f, th_deg[1], 0.0f, T);
     mat4_mult(T_acc, T, T_next);
     memcpy(T_acc, T_next, sizeof(T_acc));
-    /* T3 */
+    /* T3 */                                                           
     DH_transform(-90.0f, 0.0f, th_deg[2] + 180.0f, X_23, T);
     mat4_mult(T_acc, T, T_next);
     memcpy(T_acc, T_next, sizeof(T_acc));
