@@ -32,8 +32,13 @@ extern float g_calibrated_pan;
 extern float g_calibrated_tilt;
 extern std::atomic<bool> g_hsv_find_running;
 
-// --- 闭环验证缓存 ---
+// --- DEMO091 闭环验证缓存 ---
 extern cv::Rect g_cache_091_bbox;
 extern float g_cache_091_px;
 extern float g_cache_091_py;
 extern float g_cache_091_pz;
+
+// --- DEMO001 和 DEMO002 闭环验证缓存 ---
+extern cv::Point2f g_cache_pt1; // 锚点：1号点
+extern float g_cache_001_px, g_cache_001_py, g_cache_001_pz;
+extern float g_cache_002_px, g_cache_002_py, g_cache_002_pz;

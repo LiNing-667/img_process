@@ -9,6 +9,14 @@ namespace DemoManager {
     void runDemoSequence();
     void executeDemo000(float px, float py, float pz);
     void executeDemo001(float px, float py, float pz);
+    void executeDemo001ADJ(float px, float py, float pz);
+    void executeDemo001DONE(float px, float py, float pz);
+    void executeDemo002(float px, float py, float pz);
+    void executeDemo002ADJ(float px, float py, float pz);
+    void executeDemo002DONE(float px, float py, float pz);
+    void executeDemo003ADJ(float px, float py, float pz);
+    void executeDemo003DONE(float px, float py, float pz);
+
     void executeDemo111(float px, float py, float pz);
     void executeDemo112(float px, float py, float pz);
     void executeDemo021(float px, float py, float pz);
@@ -25,8 +33,5 @@ namespace DemoManager {
     void executeDemo091(float px, float py, float pz);
     void executeDemo092(float px, float py, float pz);
     void executeDemo093(float px, float py, float pz);
-    void executeDemo102(float px, float py, float pz);
-    void executeDemo002(float px, float py, float pz);
-    void executeDemo220();
-    void executeDemo221();
+
 }

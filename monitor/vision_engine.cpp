@@ -849,7 +849,20 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                              << " 移动至: X=" << arm_target_pose.x << " Y=" << arm_target_pose.y << " Z=" << arm_target_pose.z << " (厘米)" << endl;
                         
                              // 【新增】：如果是 DEMO091，把框和坐标存下来供闭环使用
-                        if (current_task.raw_cmd == "DEMO091") {
+
+                        // 1号点在 sorted corners_2d 中是左下角，索引为 3
+
+                        if (current_task.raw_cmd == "DEMO001") {
+                            g_cache_pt1 = obj.corners_2d[3];
+                            g_cache_001_px = arm_target_pose.x;
+                            g_cache_001_py = arm_target_pose.y;
+                            g_cache_001_pz = arm_target_pose.z;
+                        } else if (current_task.raw_cmd == "DEMO002") {
+                            g_cache_pt1 = obj.corners_2d[3];
+                            g_cache_002_px = arm_target_pose.x;
+                            g_cache_002_py = arm_target_pose.y;
+                            g_cache_002_pz = arm_target_pose.z;
+                        } else if (current_task.raw_cmd == "DEMO091") {
                             g_cache_091_bbox = safe_bbox;
                             g_cache_091_px = arm_target_pose.x;
                             g_cache_091_py = arm_target_pose.y;
@@ -878,6 +891,18 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
     }
     if (task.raw_cmd == "CHECK_091") {
         handleCheck091(raw_frame);
+        return;
+    }
+    if (task.raw_cmd == "CHECK_001") {
+        handleCheck001(raw_frame);
+        return;
+    }
+    if (task.raw_cmd == "CHECK_002") {
+        handleCheck002(raw_frame);
+        return;
+    }
+    if (task.raw_cmd == "CHECK_003") {
+        handleCheck003(raw_frame);
         return;
     }
     // 处理巡航寻找逻辑
@@ -1388,5 +1413,202 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
         Pose6D adj_pose = { g_cache_091_px, g_cache_091_py, g_cache_091_pz, 0, 0, 0 };
         cout << ">>> [视觉闭环] 卡紧完毕 (竖线<2)！触发装配收尾指令 DEMO093" << endl;
         pilot_comm.sendDemoCommand("DEMO093", adj_pose);
+    }
+}
+
+void VisionEngine::handleCheck001(Mat &raw_frame)
+{
+    if (g_cache_pt1.x < 0) {
+        cout << ">>> [视觉闭环] 缺少 DEMO001 的有效1号锚点！" << endl;
+        return;
+    }
+
+    // 注意：OpenCV 坐标系 Y 轴向下，向上推就是减法
+    // 以 1号点 为基准，向左 50，向右 150（总宽200），向上 320
+    Rect roi_rect(g_cache_pt1.x - 50, g_cache_pt1.y - 320, 200, 320);
+    roi_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
+
+    if (roi_rect.area() <= 0) return;
+
+    Mat roi = raw_frame(roi_rect);
+    Mat hsv;
+    cvtColor(roi, hsv, COLOR_BGR2HSV);
+    vector<Mat> hsv_channels;
+    split(hsv, hsv_channels);
+
+    Mat edges_s, edges_v, edges;
+    Canny(hsv_channels[1], edges_s, 12, 33);
+    Canny(hsv_channels[2], edges_v, 12, 33);
+    bitwise_or(edges_s, edges_v, edges);
+
+    vector<Vec4i> lines;
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    std::vector<int> valid_x_centers;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        Vec4i l = lines[i];
+        float angle = atan2(abs(l[3] - l[1]), abs(l[2] - l[0])) * 180.0 / CV_PI;
+        float length = norm(Point(l[0], l[1]) - Point(l[2], l[3]));
+
+        if (angle > 75.0 && angle < 105.0 && length >= roi_rect.height * 0.6) {
+            int cx = (l[0] + l[2]) / 2;
+            bool merged = false;
+            for (int &existing_x : valid_x_centers) {
+                if (abs(cx - existing_x) < 25) { merged = true; break; }
+            }
+            if (!merged) {
+                valid_x_centers.push_back(cx);
+                line(raw_frame, Point(roi_rect.x + l[0], roi_rect.y + l[1]), 
+                                Point(roi_rect.x + l[2], roi_rect.y + l[3]), Scalar(0, 0, 255), 3);
+            }
+        }
+    }
+
+    int vertical_line_count = valid_x_centers.size();
+    rectangle(raw_frame, roi_rect, Scalar(255, 255, 0), 2);
+    cout << ">>> [视觉闭环] DEMO001 侧边扫描，发现独立竖直长线数量: " << vertical_line_count << endl;
+
+    // 临界值为 2
+    if (vertical_line_count >= 2) {
+
+        g_cache_001_px -= 0.5f; 
+
+        Pose6D adj_pose = { g_cache_001_px, g_cache_001_py, g_cache_001_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO001 未卡平！下发微调指令 DEMO001_ADJ (X=" << g_cache_001_px << ")" << endl;
+        pilot_comm.sendDemoCommand("DEMO001_ADJ", adj_pose);
+    } else {
+        Pose6D adj_pose = { g_cache_001_px, g_cache_001_py, g_cache_001_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO001 卡紧完毕！触发收尾指令 DEMO001_DONE" << endl;
+        pilot_comm.sendDemoCommand("DEMO001_DONE", adj_pose);
+    }
+}
+
+void VisionEngine::handleCheck002(Mat &raw_frame)
+{
+    if (g_cache_pt1.x < 0) {
+        cout << ">>> [视觉闭环] 缺少 DEMO002 的有效1号锚点！" << endl;
+        return;
+    }
+
+    // 以 1号点 为下侧中点，向左右各 75，向上 200 像素
+    Rect roi_rect(g_cache_pt1.x - 30, g_cache_pt1.y - 250, 90, 200);
+    roi_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows); 
+
+    if (roi_rect.area() <= 0) return;
+
+    Mat roi = raw_frame(roi_rect);
+    Mat hsv;
+    cvtColor(roi, hsv, COLOR_BGR2HSV);
+    vector<Mat> hsv_channels;
+    split(hsv, hsv_channels);
+
+    Mat edges_s, edges_v, edges;
+    Canny(hsv_channels[1], edges_s, 10, 31);
+    Canny(hsv_channels[2], edges_v, 10, 31);
+    bitwise_or(edges_s, edges_v, edges);
+
+    vector<Vec4i> lines;
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    std::vector<int> valid_x_centers;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        Vec4i l = lines[i];
+        float angle = atan2(abs(l[3] - l[1]), abs(l[2] - l[0])) * 180.0 / CV_PI;
+        float length = norm(Point(l[0], l[1]) - Point(l[2], l[3]));
+
+        if (angle > 75.0 && angle < 105.0 && length >= roi_rect.height * 0.6) {
+            int cx = (l[0] + l[2]) / 2;
+            bool merged = false;
+            for (int &existing_x : valid_x_centers) {
+                if (abs(cx - existing_x) < 25) { merged = true; break; }
+            }
+            if (!merged) {
+                valid_x_centers.push_back(cx);
+                line(raw_frame, Point(roi_rect.x + l[0], roi_rect.y + l[1]), 
+                                Point(roi_rect.x + l[2], roi_rect.y + l[3]), Scalar(0, 0, 255), 3);
+            }
+        }
+    }
+
+    int vertical_line_count = valid_x_centers.size();
+    rectangle(raw_frame, roi_rect, Scalar(255, 255, 0), 2);
+    cout << ">>> [视觉闭环] DEMO002 侧边扫描，发现独立竖直长线数量: " << vertical_line_count << endl;
+
+    // 临界值为 3 (即允许出现0、1、2条，达到3条即判为未卡平) // 还是2吧
+    if (vertical_line_count >= 2) {
+
+        g_cache_002_py += 0.5f; 
+
+        Pose6D adj_pose = { g_cache_002_px, g_cache_002_py, g_cache_002_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO002 未卡平 (竖线≥3)！下发微调指令 DEMO002_ADJ (X=" << g_cache_002_px << ")" << endl;
+        pilot_comm.sendDemoCommand("DEMO002_ADJ", adj_pose);
+    } else {
+        Pose6D adj_pose = { g_cache_002_px, g_cache_002_py, g_cache_002_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO002 卡紧完毕！触发收尾指令 DEMO002_DONE" << endl;
+        pilot_comm.sendDemoCommand("DEMO002_DONE", adj_pose);
+    }
+}
+void VisionEngine::handleCheck003(Mat &raw_frame)
+{
+    if (g_cache_pt1.x < 0) {
+        cout << ">>> [视觉闭环] 缺少 DEMO003 的有效1号锚点！" << endl;
+        return;
+    }
+
+    // 和 CHECK_001 相同的框选逻辑：向左50，向右150，向上320
+    Rect roi_rect(g_cache_pt1.x - 50, g_cache_pt1.y - 230, 100, 230);
+    roi_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows); 
+
+    if (roi_rect.area() <= 0) return;
+
+    Mat roi = raw_frame(roi_rect);
+    Mat hsv;
+    cvtColor(roi, hsv, COLOR_BGR2HSV);
+    vector<Mat> hsv_channels;
+    split(hsv, hsv_channels);
+
+    Mat edges_s, edges_v, edges;
+    Canny(hsv_channels[1], edges_s, 8, 27);
+    Canny(hsv_channels[2], edges_v, 8, 27);
+    bitwise_or(edges_s, edges_v, edges);
+
+    vector<Vec4i> lines;
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    std::vector<int> valid_x_centers;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        Vec4i l = lines[i];
+        float angle = atan2(abs(l[3] - l[1]), abs(l[2] - l[0])) * 180.0 / CV_PI;
+        float length = norm(Point(l[0], l[1]) - Point(l[2], l[3]));
+
+        if (angle > 75.0 && angle < 105.0 && length >= roi_rect.height * 0.6) {
+            int cx = (l[0] + l[2]) / 2;
+            bool merged = false;
+            for (int &existing_x : valid_x_centers) {
+                if (abs(cx - existing_x) < 10) { merged = true; break; }
+            }
+            if (!merged) {
+                valid_x_centers.push_back(cx);
+                line(raw_frame, Point(roi_rect.x + l[0], roi_rect.y + l[1]), 
+                                Point(roi_rect.x + l[2], roi_rect.y + l[3]), Scalar(0, 0, 255), 3);
+            }
+        }
+    }
+
+    int vertical_line_count = valid_x_centers.size();
+    rectangle(raw_frame, roi_rect, Scalar(255, 255, 0), 2);
+    cout << ">>> [视觉闭环] DEMO003 侧边扫描，发现独立竖直长线数量: " << vertical_line_count << endl;
+
+    // 临界值为 2。
+    // 注意：复用 g_cache_002 坐标进行微调，因为 003 检测的物体实际上和 002 阶段是同一个位置。
+    if (vertical_line_count >= 2) {
+        g_cache_002_px -= 0.5f; 
+        Pose6D adj_pose = { g_cache_002_px, g_cache_002_py, g_cache_002_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO003 未卡平！下发微调指令 DEMO003_ADJ (X=" << g_cache_002_px << ")" << endl;
+        pilot_comm.sendDemoCommand("DEMO003_ADJ", adj_pose);
+    } else {
+        Pose6D adj_pose = { g_cache_002_px, g_cache_002_py, g_cache_002_pz, 0, 0, 0 };
+        cout << ">>> [视觉闭环] DEMO003 卡紧完毕！触发收尾指令 DEMO003_DONE" << endl;
+        pilot_comm.sendDemoCommand("DEMO003_DONE", adj_pose);
     }
 }

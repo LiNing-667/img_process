@@ -69,6 +69,35 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         std::cout << "[Pilot] DEMO001" << std::endl;
         DemoManager::executeDemo001(px, py, pz);
     }
+    else if (strcmp(cmd, "DEMO001_ADJ") == 0) {
+        std::cout << "[Pilot] DEMO001ADJ" << std::endl;
+        DemoManager::executeDemo001ADJ(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO001_DONE") == 0) {
+        std::cout << "[Pilot] DEMO001DONE" << std::endl;
+        DemoManager::executeDemo001DONE(px, py, pz);
+    }
+
+    else if (strcmp(cmd, "DEMO002") == 0) {
+        std::cout << "[Pilot] DEMO002" << std::endl;
+        DemoManager::executeDemo002(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO002_ADJ") == 0) {
+        std::cout << "[Pilot] DEMO001ADJ" << std::endl;
+        DemoManager::executeDemo002ADJ(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO002_DONE") == 0) {
+        std::cout << "[Pilot] DEMO001DONE" << std::endl;
+        DemoManager::executeDemo002DONE(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO003_ADJ") == 0) {
+        std::cout << "[Pilot] DEMO003ADJ" << std::endl;
+        DemoManager::executeDemo003ADJ(px, py, pz);
+    }
+    else if (strcmp(cmd, "DEMO003_DONE") == 0) {
+        std::cout << "[Pilot] DEMO003DONE" << std::endl;
+        DemoManager::executeDemo003DONE(px, py, pz);
+    }
     else if (strcmp(cmd, "DEMO111") == 0) {
         std::cout << "[Pilot] DEMO111" << std::endl;
         DemoManager::executeDemo111(px, py, pz);
@@ -120,14 +149,6 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     else if (strcmp(cmd, "DO031") == 0) {
         std::cout << "[Pilot] DO031" << std::endl;
         DemoManager::executeDo031();
-    }
-    else if (strcmp(cmd, "DEMO102") == 0) {
-        std::cout << "[Pilot] DEMO102" << std::endl;
-        DemoManager::executeDemo102(px, py, pz);
-    }
-    else if (strcmp(cmd, "DEMO002") == 0) {
-        std::cout << "[Pilot] DEMO002" << std::endl;
-        DemoManager::executeDemo002(px, py, pz);
     }
     else if (strcmp(cmd, "DEMO091") == 0) {
         std::cout << "[Pilot] DEMO091" << std::endl;

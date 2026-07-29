@@ -253,6 +253,27 @@ void serialReadThreadFunc()
                     g_demo_task.pending = true;
                     g_demo_task.raw_cmd = "CHECK_091";
                 }
+                else if (line.rfind("CHECK_001", 0) == 0)
+                {
+                    std::cout << "\n[Monitor 接收] 收到 DEMO001 悬空信号，开始视觉验核！" << std::endl;
+                    std::lock_guard<std::mutex> lock(g_task_mtx);
+                    g_demo_task.pending = true;
+                    g_demo_task.raw_cmd = "CHECK_001";
+                }
+                else if (line.rfind("CHECK_002", 0) == 0)
+                {
+                    std::cout << "\n[Monitor 接收] 收到 DEMO002 悬空信号，开始视觉验核！" << std::endl;
+                    std::lock_guard<std::mutex> lock(g_task_mtx);
+                    g_demo_task.pending = true;
+                    g_demo_task.raw_cmd = "CHECK_002";
+                }
+                else if (line.rfind("CHECK_003", 0) == 0)
+                {
+                    std::cout << "\n[Monitor 接收] 收到 DEMO003 悬空信号，开始视觉验核！" << std::endl;
+                    std::lock_guard<std::mutex> lock(g_task_mtx);
+                    g_demo_task.pending = true;
+                    g_demo_task.raw_cmd = "CHECK_003";
+                }
                 else if (line.rfind("CHASSIS_DONE", 0) == 0)
                 {
                     std::cout << "\n[Monitor 接收] 收到小车底盘就位确认: " << line << std::endl;

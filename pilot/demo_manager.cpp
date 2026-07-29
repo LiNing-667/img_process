@@ -114,15 +114,13 @@ namespace DemoManager
                         float f_zx = -0.1f, f_zy = 0.0f, f_zz = -1.0f;
                         // 实际要去的三维坐标点
                         float arm_x = px - 2.0f;
-                        float arm_y = py - 10.0f;
+                        float arm_y = py - 9.0f;
                         // 让手腕顺着从基座到目标点的向量方向延伸
                         float length = std::sqrt(arm_x * arm_x + arm_y * arm_y);
                         float f_xx = arm_x / length;
                         float f_xy = arm_y / length;
                         float f_xz = 0.0f;
-                        g_arm.moveSmooth(1, -13, -10, 8, -0.1, 0, -1, -1, 0, 0);
-                        usleep(1000000);
-                        std::cout << "\n>>>开始执行demo111 <<<" << std::endl;
+
                         g_arm.setServoAngle(1, 15, 110.0f);
                         usleep(1500000);
                         // 手腕是自然歪斜姿态
@@ -149,19 +147,15 @@ namespace DemoManager
     {
         std::thread([=]()
                     {
-                        float f_zx = -0.1f, f_zy = 0.0f, f_zz = -1.0f;
+                        float f_zx = -0.0f, f_zy = 0.0f, f_zz = -1.0f;
                         float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
-                        g_arm.moveSmooth(1, px, py - 9.0f, 1, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(1000000);
-
-                        g_arm.setServoAngle(1, 15, 130.0f);
+                        g_arm.moveSmooth(1, px, py - 9.0f, 2, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(1500000);
-                        g_arm.moveSmooth(1, px - 1.6f, py - 0.0f, 1, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(2000000);
-                        g_arm.setServoAngle(1, 15, 50.0f);
+                        g_arm.moveSmooth(1, px, py - 0.5f, 2, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(1000000);
-
+                        g_arm.setServoAngle(1, 15, Arm1_close);
+                        usleep(1500000);
                         g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
                         usleep(1000000);
                     })
@@ -175,11 +169,13 @@ namespace DemoManager
                         float f_zx = -0.1f, f_zy = 0.0f, f_zz = -1.0f;
                         float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
+
+
                         g_arm.setServoAngle(0, 6, Arm0_open);
                         usleep(1500000);
-                        g_arm.moveSmooth(0, px, py, 3.5, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(0, px, py, 4.5, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(2000000);
-                        g_arm.moveSmooth(0, px, py, 0, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(0, px, py, 1.0, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(800000);
                         g_arm.setServoAngle(0, 6, Arm0_close);
                         usleep(1000000);
@@ -518,64 +514,66 @@ namespace DemoManager
                     {
                         float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
                         float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
-                        float f_zx = -0.20f, f_zy = 0.0f, f_zz = -1.0f;
+                        float f_zx = -0.0f, f_zy = 0.0f, f_zz = -1.0f;
                         float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
-                        //   g_arm.moveSmooth(0, px -5.0f, py+0.5 , 4.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-                        //   g_arm.moveSmooth(0, px -5.0f, py+0.5 , 2.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(800000);
-                        //   g_arm.setServoAngle(0, 6, (Arm0_close + Arm0_open)/2 ); usleep(800000);
-                        //   g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1200000);
-                        //   g_arm.setServoAngle(0, 6, Arm0_open); usleep(800000);
-                        //
-                        //   //换手
-                        //   g_arm.moveSmooth(1, -10, 0 ,8, -0.1, 0, -1, -1, 0, 0);usleep(1200000);
-                        //   std::vector<float> target_ch = {145.0f + 18.0f, 80.0f + 18.0f, 1.0f + 18.0f, 70.0f + 18.0f,  120.0f + 18.0f,  70.0f - 55.0f };
-                        //   g_arm.moveRawChannelsSmooth(1, target_ch, 1.5f); usleep(1500000); // 等待移动完成
-                        //   g_arm.moveSmooth(0, -12.5, -6 , 2.2, -0.1, 0, -1, -1, 0, 0); usleep(2300000);
-                        //   g_arm.setServoAngle(0, 6, Arm0_close); usleep(1000000);
-                        //   g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
-                        //   g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0); usleep(1000000);
-                        //   g_arm.setServoAngle(1, 15, Arm1_close); usleep(1000000);
-                        //   g_arm.moveSmooth(1, -10, 0 , 5, -0.1, 0, -1, -1, 0, 0);  usleep(2000000);
-                        //   g_arm.moveSmooth(1, -13, -10 , 9, -0.1, 0, -1, -1, 0, 0);  usleep(200000);
-                        //   g_arm.moveSmooth(0, -13 , 10 , 5, -0.1, 0, -1, -1, 0, 0);  usleep(1200000);
+
+                        g_arm.moveSmooth(1, -13, 0 , 11 , -0.1 , 0, -1, -1, 0, 0); 
+                        usleep(1000000);
+
+                        g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 7.2f , 9.5f, 0.1f , f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
+                        g_arm.setServoAngle(1, 15, Arm1_open); usleep(600000);
+                        g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 5.2f, 6.0f, 0.1f, f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
+                        g_arm.setServoAngle(1, 15, Arm1_close); 
 
                         // 拼ID=2物体
-                        g_arm.moveSmooth(0, px + 1.0f, py + 8.5f, 6.2f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(2000000);
-                        g_arm.moveSmooth(0, px + 1.0f, py + 5.8f, 5.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(2000000);
-                        g_arm.moveSmooth(0, px + 1.0f, py + 5.8f, 3.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(800000);
-                        g_arm.moveSmooth(0, px + 1.0f, py + 5.8f, 0.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(500000);
-                        g_arm.setServoAngle(0, 6, Arm0_open);
-                        usleep(800000); // 组装压实后，松开爪子
-
-                        g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
-                        usleep(1000000); // 抬升并回归待命姿态
+                        //视觉闭环
+                        g_arm.moveSmooth(0, px + 1.5f, py + 8.5f , 8.5f, -0.05, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+                        g_arm.moveSmooth(0, px + 1.5f, py + 6.0f , 8.5f, -0.05, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+                        //停止移动，向 Monitor 请求拍照验核
+                        std::cout << ">>> [闭环] 右臂就位，请求上位机执行边缘校验..." << std::endl;
+                        sendToMonitor("CHECK_001\r\n");
                     })
             .detach();
     }
 
-    void executeDemo102(float px, float py, float pz)
+    void executeDemo001ADJ(float px, float py, float pz)
     {
-        std::thread([=]()
-                    {
-            float f_zx = -0.1f, f_zy = 0.0f, f_zz = -1.0f;
+        std::thread([=]() {
+            float f_zx = -0.05f, f_zy = 0.0f, f_zz = -1.0f;
             float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
-            std::cout << "\n>>> [DEMO102] 第二次拼装: ARM1 移动至目标 <<<" << std::endl;
-            g_arm.moveSmooth(1, -13, -10 , 5, -0.1, 0, -1, -1, 0, 0);  usleep(1000000); 
-            g_arm.moveSmooth(1, px +2.2f, py + 0.8f , pz + 3.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2500000);
-            g_arm.moveSmooth(1, px -0.5f, py + 0.8f , pz + 3.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(1, px -0.5f, py + 0.8f , pz - 0.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            std::cout << "\n>>> [DEMO001] 闭环微调执行中..." << std::endl;
+            
+            g_arm.moveSmooth(0, px + 0.5f, py + 8.5f , 8.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.moveSmooth(0, px + 0.5f, py + 6.0f , 8.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
 
-            g_arm.setServoAngle(1, 15, 150.0f); usleep(1000000); 
-            g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
-            usleep(1000000); })
-            .detach();
+            // 执行完微调后，再次呼叫 Monitor
+            sendToMonitor("CHECK_001\r\n");
+        }).detach();
     }
+
+    void executeDemo001DONE(float px, float py, float pz)
+    {
+        std::thread([=]() {
+            float f_zx = -0.05f, f_zy = 0.0f, f_zz = -1.0f;
+            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+            float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
+            float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
+
+            g_arm.moveSmooth(0, px + 0.5f, py + 5.0f , 5.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
+            g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
+            usleep(1000000);
+            g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
+            g_arm.moveSmooth(1, px_arm1 + 1.5 , py_arm1 - 3.2f , 9.5f, 0.0f , f_zy, f_zz, f_xx, f_xy, f_xz);usleep(1000000);
+            g_arm.moveSmooth(1, -13, 0 , 11 , -0.1 , 0, -1, -1, 0, 0); 
+            usleep(1000000);
+            g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
+            usleep(1000000);
+        }).detach();
+    }
+
 
     void executeDemo002(float px, float py, float pz)
     {
@@ -583,38 +581,104 @@ namespace DemoManager
                     {
                         float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
                         float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
-                        float f_zx = -0.22f, f_zy = 0.0f, f_zz = -1.0f;
+                        float f_zx = -0.0f, f_zy = 0.0f, f_zz = -1.0f;
                         float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
                         // 拼ID=1物体
-                        g_arm.moveSmooth(1, px_arm1 + 1.6, py_arm1 - 0.2, 8.5f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(3000000);
-                        g_arm.moveSmooth(1, px_arm1 + 0.1, py_arm1 - 0.2, 7.2f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(1, px_arm1 + 3.0, py_arm1 - 3.0 , 9.5f, -0.0f, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(2000000);
-                        g_arm.moveSmooth(1, px_arm1 + 0.1, py_arm1 - 0.2, 0.5f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(1000000);
-                        g_arm.setServoAngle(1, 15, (Arm1_open + Arm1_close) / 2);
-                        usleep(800000); // 组装压实后，松开爪子
-                        
-                        g_arm.moveSmooth(1, px_arm1 + 2.0, py_arm1 + 0.0, 6.5f, -0.10f, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(1000000);
-                        g_arm.moveSmooth(1, -12, -10 , 8 , 0, 0, -1, -1, 0, 0); //停在一旁
+                        g_arm.moveSmooth(1, px_arm1 + 0.5, py_arm1 - 3.0 , 9.0f, -0.0f, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(1000000);
 
-                        // 拼ID=2物体
-                        g_arm.moveSmooth(0, px - 0.5f, py + 7.5f, 5.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(3000000);
-                        g_arm.moveSmooth(0, px - 0.5f, py + 6.5f, 4.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(2000000);
-                        g_arm.moveSmooth(0, px - 0.5f, py + 6.5f, 2.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
-                        usleep(500000);
-                        g_arm.setServoAngle(0, 6, Arm0_open);
-                        usleep(800000); // 组装压实后，松开爪子
-
-                        g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
-                        usleep(1000000); // 抬升并回归待命姿态
+                        //停止移动，向 Monitor 请求拍照验核
+                        std::cout << ">>> [闭环] 左臂就位，请求上位机执行边缘校验..." << std::endl;
+                        sendToMonitor("CHECK_002\r\n");
                     })
             .detach();
+    }
+
+    void executeDemo002ADJ(float px, float py, float pz)
+    {
+        std::thread([=]() {
+            float f_zx = -0.0f, f_zy = 0.0f, f_zz = -1.0f;
+            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+            float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
+            float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
+
+            std::cout << "\n>>> [DEMO002] 闭环微调执行中..." << std::endl;
+            
+            g_arm.moveSmooth(1, px_arm1 + 3.0, py_arm1 - 3.0, 9.5f, -0.0f, f_zy, f_zz, f_xx, f_xy, f_xz);
+            usleep(2000000);
+            g_arm.moveSmooth(1, px_arm1 + 0.5, py_arm1 - 3.0, 9.0f, -0.0f, f_zy, f_zz, f_xx, f_xy, f_xz);
+            usleep(2000000);
+
+            // 执行完微调后，再次呼叫 Monitor
+            sendToMonitor("CHECK_002\r\n");
+        }).detach();
+    }
+
+    void executeDemo002DONE(float px, float py, float pz)
+    {
+        std::thread([=]() {
+            float f_zx = -0.08f, f_zy = 0.0f, f_zz = -1.0f;
+            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+            float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
+            float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
+            
+            g_arm.moveSmooth(1, px_arm1 , py_arm1 - 3.0, 7.0f, -0.08f, f_zy, f_zz, f_xx, f_xy, f_xz);
+            usleep(1500000);
+            g_arm.setServoAngle(1, 15, (Arm1_open + Arm1_close) / 2);
+            usleep(500000); // 组装压实后，松开爪子
+            g_arm.moveSmooth(1, px_arm1 , py_arm1 - 3.0, 9.0f, -0.08f, f_zy, f_zz, f_xx, f_xy, f_xz);
+            usleep(1000000);
+            g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
+            usleep(1000000);
+            g_arm.moveSmooth(1, px_arm1 , py_arm1 - 4.5, 6.0f, -0.08f, f_zy, f_zz, f_xx, f_xy, f_xz);
+            usleep(1000000);
+            // 再拼一个ID=2的物体
+            // 视觉闭环
+            g_arm.moveSmooth(0, px + 0.5f, py + 8.5f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.moveSmooth(0, px + 0.5f, py + 5.7f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            //停止移动，向 Monitor 请求拍照验核
+            std::cout << ">>> [闭环] 右臂就位，请求上位机执行边缘校验..." << std::endl;
+            sendToMonitor("CHECK_003\r\n");
+   
+        }).detach();
+    }
+
+        void executeDemo003ADJ(float px, float py, float pz)
+    {
+        std::thread([=]() {
+            float f_zx = -0.08f, f_zy = 0.0f, f_zz = -1.0f;
+            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+
+            std::cout << "\n>>> [DEMO001] 闭环微调执行中..." << std::endl;
+            
+            g_arm.moveSmooth(0, px + 0.5f, py + 8.5f , 8.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.moveSmooth(0, px + 0.5f, py + 5.7f , 8.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+
+            // 执行完微调后，再次呼叫 Monitor
+            sendToMonitor("CHECK_003\r\n");
+        }).detach();
+    }
+
+    void executeDemo003DONE(float px, float py, float pz)
+    {
+        std::thread([=]() {
+            float f_zx = -0.08f, f_zy = 0.0f, f_zz = -1.0f;
+            float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
+            float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
+            float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
+
+            g_arm.moveSmooth(0, px + 0.5f, py + 5.0f , 7.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+
+            g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
+            g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
+            usleep(1000000);
+            g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
+            usleep(1000000);
+
+        }).detach();
     }
 
     // arm2是摄像头云台

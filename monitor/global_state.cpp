@@ -31,3 +31,7 @@ cv::Rect g_cache_091_bbox(0, 0, 0, 0);
 float g_cache_091_px = 0.0f;
 float g_cache_091_py = 0.0f;
 float g_cache_091_pz = 0.0f;
+
+cv::Point2f g_cache_pt1(-1.0f, -1.0f);
+float g_cache_001_px = 0.0f, g_cache_001_py = 0.0f, g_cache_001_pz = 0.0f;
+float g_cache_002_px = 0.0f, g_cache_002_py = 0.0f, g_cache_002_pz = 0.0f;
