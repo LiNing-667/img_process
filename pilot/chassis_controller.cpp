@@ -4,6 +4,7 @@
  */
 #include "chassis_controller.h"
 #include "pilot_config.h"
+#include "pilot_global.h"
 #include <iostream>
 #include <cmath>
 #include <unistd.h>
@@ -201,10 +202,18 @@ void ChassisController::blindTest() {
 }
 
 void ChassisController::resetPosition() {
+    // 清空底层 PID 里程计
     curr_x_ = 0; curr_y_ = 0; curr_yaw_ = 0; target_x_ = 0; target_y_ = 0; target_yaw_ = 0;
-    sendCmd("$spd:0,0,0,0#"); usleep(10000); sendCmd("$mtype:1#");
+    
+    // 【关键新增】：彻底清空全局路径规划坐标大脑！
+    nav_x_ = 0.0f; 
+    nav_y_ = 0.0f; 
+    nav_yaw_ = 0.0f;
+    
+    sendCmd("$spd:0,0,0,0#"); 
+    usleep(10000); 
+    sendCmd("$mtype:1#");
 }
-
 void ChassisController::emergencyStop() {
     target_x_ = curr_x_.load(); target_y_ = curr_y_.load(); target_yaw_ = curr_yaw_.load();
     sendCmd("$spd:0,0,0,0#"); usleep(10000); sendCmd("$mtype:1#");
@@ -217,7 +226,7 @@ void ChassisController::moveRelative(float dx_cm, float dy_cm) {
     float dist = std::sqrt(dx_cm * dx_cm + dy_cm * dy_cm);
 
     // 2. 小距离微调分支 (阈值设为 5.0 厘米，可以根据实车情况调整)
-    if (dist > 0.1f && dist <= 10.0f) {
+    if (dist > 0.1f && dist <= 1000.0f) {
         std::cout << "[Chassis] 距离小 (" << dist << "cm)，启动开环微动补偿！" << std::endl;
         
         // 开启一个独立线程执行短促的开环脉冲，防止阻塞主串口接收
@@ -269,3 +278,231 @@ void ChassisController::stopVelocity() {
 }
 
 ChassisController g_car;
+
+void ChassisController::planPath(float tx, float ty, float tyaw) {
+    std::thread([this, tx, ty, tyaw]() {
+        auto normalize_yaw = [](float y) {
+            while (y > 180.0f) y -= 360.0f;
+            while (y <= -180.0f) y += 360.0f;
+            return y;
+        };
+
+        auto move_wait = [this](float forward_cm, float right_cm, float speed) {
+            float dist = std::sqrt(forward_cm*forward_cm + right_cm*right_cm);
+            if (dist < 0.5f) return;
+            this->moveRelative(forward_cm, right_cm); 
+            int wait_ms = (int)((dist / speed) * 1000) + 500;
+            usleep(wait_ms * 1000);
+        };
+
+        auto turn_wait = [this](float deg, float speed) {
+            if (std::abs(deg) < 1.0f) return;
+            this->turnRelative(deg);
+            int wait_ms = (int)((std::abs(deg) / speed) * 1000) + 500;
+            usleep(wait_ms * 1000);
+        };
+
+        float dyaw = normalize_yaw(tyaw - nav_yaw_);
+        float rad = nav_yaw_ * M_PI / 180.0f;
+        float dx_global = tx - nav_x_;
+        float dy_global = ty - nav_y_;
+        
+        // ==============================================================
+        // 【终极坐标系对齐】：Yaw=0 代表车头朝向 +Y 轴 (正前方)
+        // 局部前后 = X全局差*sin + Y全局差*cos
+        // 局部左右 = X全局差*cos - Y全局差*sin
+        // ==============================================================
+        float dy_local = dx_global * std::sin(rad) + dy_global * std::cos(rad);  // 局部向前 Fwd
+        float dx_local = dx_global * std::cos(rad) - dy_global * std::sin(rad);  // 局部向右 Right
+
+        std::cout << "\n>>> [路径规划] 起点:(" << nav_x_ << "," << nav_y_ << " 朝向:" << nav_yaw_ << ")" << std::endl;
+        std::cout << ">>> [路径规划] 目标:(" << tx << "," << ty << " 朝向:" << tyaw << ")" << std::endl;
+        std::cout << ">>> [路径规划] 解算动作: 需前后 " << dy_local << " cm, 需左右 " << dx_local << " cm" << std::endl;
+
+        // ==============================================================
+        // 情况 4：需要旋转180度
+        // ==============================================================
+        if (std::abs(dyaw) > 179.0f) {
+            // 拔出工位：后退 15cm
+            move_wait(-15.0f, 0.0f, 15.0f); 
+            
+            // 同步更新全局里程碑（套用正运动学）
+            nav_x_ += -15.0f * std::sin(rad); 
+            nav_y_ += -15.0f * std::cos(rad);
+            
+            turn_wait(90.0f, 45.0f);
+            turn_wait(90.0f, 45.0f);
+            nav_yaw_ = normalize_yaw(nav_yaw_ + 180.0f);
+            
+            dyaw = 0.0f; 
+            rad = nav_yaw_ * M_PI / 180.0f;
+            dx_global = tx - nav_x_;
+            dy_global = ty - nav_y_;
+            
+            // 重新计算局部坐标
+            dy_local = dx_global * std::sin(rad) + dy_global * std::cos(rad);
+            dx_local = dx_global * std::cos(rad) - dy_global * std::sin(rad);
+        }
+
+        // ==============================================================
+        // 情况 1：不需要最终的朝向旋转 (引入 15cm 三段式安全路由)
+        // ==============================================================
+        if (std::abs(dyaw) < 1.0f) {
+            if (std::abs(dx_local) > 0.5f) {
+                float first_y = dy_local - 15.0f; 
+                
+                if (std::abs(first_y) > 0.5f) {
+                    move_wait(first_y, 0.0f, 15.0f);
+                }
+                
+                if (dx_local > 0) {
+                    turn_wait(90.0f, 45.0f);          
+                    move_wait(dx_local, 0.0f, 15.0f); 
+                    turn_wait(-90.0f, 45.0f);         
+                } else {
+                    turn_wait(-90.0f, 45.0f);         
+                    move_wait(-dx_local, 0.0f, 15.0f);
+                    turn_wait(90.0f, 45.0f);          
+                }
+                
+                move_wait(15.0f, 0.0f, 15.0f);
+
+            } else {
+                move_wait(dy_local, 0.0f, 15.0f);
+            }
+        }
+        // ==============================================================
+        // 情况 2 / 情况 3：需要旋转 90 度
+        // ==============================================================
+        else if (std::abs(dyaw) > 89.0f && std::abs(dyaw) < 91.0f) {
+            move_wait(dy_local, 0.0f, 15.0f); 
+            turn_wait(dyaw, 45.0f);           
+            float move_after = (dyaw > 0) ? dx_local : -dx_local;
+            move_wait(move_after, 0.0f, 15.0f);
+        }
+
+        // 终点状态结算
+        nav_x_ = tx;
+        nav_y_ = ty;
+        nav_yaw_ = normalize_yaw(tyaw);
+        
+        sendToMonitor("MOVE_DONE\r\n");
+
+    }).detach();
+}
+
+void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw) {
+    std::thread([this, dx, dy, dyaw]() {
+        // ==========================================================
+        // 【轴向映射】：小车(右+X, 前+Y) vs 机械臂(后+X, 右+Y)
+        // ==========================================================
+        float move_fwd   = -dx;   // 正数代表需要前进，负数代表后退
+        float move_right = dy;    // 正数代表需要向右，负数代表向左
+        float turn_a     = dyaw;  // 正数代表顺时针(右)旋转，负数逆时针(左)旋转
+
+        // 异常大误差的“降维试探”保护机制
+        if (std::abs(move_fwd) > 15.0f) {
+            move_fwd = (move_fwd > 0) ? 5.0f : -5.0f;
+        }
+        if (std::abs(move_right) > 8.0f) {
+            move_right = (move_right > 0) ? 5.0f : -5.0f;
+        }
+        if (std::abs(turn_a) > 40.0f) {
+            turn_a = (turn_a > 0) ? 15.0f : -15.0f;
+        }
+
+        std::cout << "\n>>> [底盘开环对齐] 动作防暴走处理后实际执行 -> "
+                  << "需" << (move_fwd >= 0 ? "前进 " : "后退 ") << std::abs(move_fwd) << " cm | "
+                  << "需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right) << " cm | "
+                  << "需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" 
+                  << std::endl;
+
+        float speed_base = 250.0f;    
+        float cm_per_sec_fwd = 18.0f; 
+        float cm_per_sec_lat = 15.0f; 
+        float back_dist = 0.0f;       
+
+        // ==========================================================
+        // 【核心修复】：改为互斥状态机 (else if)。
+        // 阈值匹配 Monitor 的判定条件。每次只执行一个优先级最高的动作，
+        // 执行完立刻拍照刷新误差，绝对不再拿旧数据瞎跑！
+        // ==========================================================
+        if (std::abs(turn_a) > 8.0f) {
+            std::cout << ">>> [底盘开环对齐] 动作1: 复合旋转补偿..." << std::endl;
+            
+            float vy_diag = (turn_a < 0) ? speed_base : -speed_base; 
+            this->setVelocity(-speed_base, vy_diag, 0.0f);
+            
+            float t_diag = 0.3f + (std::abs(turn_a) / 45.0f) * 0.4f;
+            usleep((int)(t_diag * 1000000));
+            this->stopVelocity();
+            usleep(300000); 
+
+            this->turnRelative(turn_a);
+            int wait_ms = (int)((std::abs(turn_a) / 45.0f) * 1000) + 500;
+            usleep(wait_ms * 1000);
+
+            this->setVelocity(speed_base, 0.0f, 0.0f);
+            // 保留你的完美倍率
+            usleep((int)(t_diag * 1000000)); 
+            this->stopVelocity();
+            usleep(300000);
+        }
+        else if (std::abs(move_right) > 1.5f) {
+            std::cout << ">>> [底盘开环对齐] 动作2: 横向补偿平移..." << std::endl;
+            this->setVelocity(-speed_base, 0.0f, 0.0f);
+            usleep(300000);
+            
+            float t_lat = std::abs(move_right) / cm_per_sec_lat;
+            float vy_val = (move_right > 0) ? speed_base : -speed_base; 
+            this->setVelocity(-speed_base, vy_val, 0.0f);
+            usleep((int)(t_lat * 1000000));
+            
+            this->stopVelocity();
+            usleep(400000); 
+            
+            // 因为解耦了，所以顺带在这里收尾一点纵向偏差
+            float back_dist = 0.3f * cm_per_sec_fwd + t_lat * (cm_per_sec_fwd * 0.4f); 
+            float target_fwd = move_fwd + back_dist;
+            if (std::abs(target_fwd) > 1.0f) {
+                std::cout << ">>> [底盘开环对齐] 动作2附带: 纵向切入..." << std::endl;
+                float t_fwd = std::abs(target_fwd) / cm_per_sec_fwd;
+                float vx_val = (target_fwd > 0) ? speed_base : -speed_base; 
+                this->setVelocity(vx_val, 0.0f, 0.0f);
+                usleep((int)(t_fwd * 1000000));
+                this->stopVelocity();
+                usleep(300000);
+            }
+        }
+        else if (std::abs(move_fwd) > 2.0f) {
+            std::cout << ">>> [底盘开环对齐] 动作3: 纯纵向归位..." << std::endl;
+            float t_fwd = std::abs(move_fwd) / cm_per_sec_fwd;
+            float vx_val = (move_fwd > 0) ? speed_base : -speed_base; 
+            
+            this->setVelocity(vx_val, 0.0f, 0.0f);
+            usleep((int)(t_fwd * 1000000));
+            
+            this->stopVelocity();
+            usleep(300000);
+        }
+
+        // ==========================================================
+        // 【关键策略】：斩断开环积分死区！
+        // 不再在这里使用 nav_x_ += ... 更新坐标，完全移交你的 NAV_ADJ 闭环系统！
+        // ==========================================================
+        std::cout << ">>> [底盘开环对齐] 单步动作执行完毕！移交 PnP 视觉重新核对..." << std::endl;
+        sendToMonitor("ALIGN_DONE\r\n");
+    }).detach();
+}
+
+// 【新增】：Pilot 接收 Monitor 传来的首尾 PnP 漂移结果并更新大脑
+void ChassisController::applyNavAdjustment(float real_fwd, float real_right) {
+    float rad = nav_yaw_ * M_PI / 180.0f;
+    float d_nav_x = real_right * std::cos(rad) + real_fwd * std::sin(rad);
+    float d_nav_y = -real_right * std::sin(rad) + real_fwd * std::cos(rad);
+    
+    nav_x_ += d_nav_x;
+    nav_y_ += d_nav_y;
+    
+    std::cout << ">>> [全局路由] PnP 端到端精度闭环完成！更新靶点补偿: X补 " << d_nav_x << " cm, Y补 " << d_nav_y << " cm" << std::endl;
+}

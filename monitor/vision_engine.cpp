@@ -15,6 +15,11 @@
 using namespace cv;
 using namespace std;
 
+// 【新增】：用于宏动作链的 A/B 状态机标志位
+bool g_wf_align_done = false;     // A 信号：动作执行完成
+bool g_wf_align_success = false;  // B 信号：精度已完全达标
+bool g_reset_align_memory = false;
+
 namespace TaskManager {
     DemoTask fetchTask() {
         std::lock_guard<std::mutex> lock(g_task_mtx);
@@ -193,21 +198,55 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
     {
         cout << "[Monitor] 正在执行神经网络与 6D 位姿解算 (锁定ID=" << current_task.class_id << ")..." << endl;
         
-        // 针对 ID=9 的硬编码虚拟检测框，跳过主 YOLO 检测
+        // 针对 ID=9，使用动态 HSV 提取最大蓝色区域，并裁切上下 10% 后送入 NEXT 模型
         if (current_task.class_id == 9)
         {
-            current_yolo_res.detected = true;
-            current_yolo_res.objects.clear();
+            Mat hsv, mask;
+            cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
+            inRange(hsv, Scalar(100, 100, 50), Scalar(130, 255, 255), mask);
+            Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+            morphologyEx(mask, mask, MORPH_OPEN, kernel);
+            morphologyEx(mask, mask, MORPH_CLOSE, kernel);
 
-            ObjectMeta obj9;
-            obj9.bbox = Rect(20, 0, 800, 460); // 左侧20，上侧0，宽800，高460
-            obj9.center = Point2f(obj9.bbox.x + obj9.bbox.width / 2.0f, obj9.bbox.y + obj9.bbox.height / 2.0f);
-            obj9.class_id = 9;
-            obj9.confidence = 1.0f; // 虚拟置信度 100%
-            obj9.has_refined_center = false;
+            vector<vector<Point>> contours;
+            findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-            current_yolo_res.objects.push_back(obj9);
-            cout << ">>> [特殊模式] 截获 ID=9，划定 600x500 固定选区作为目标送入 NEXT 模型！" << endl;
+            double max_area = 0;
+            Rect best_rect(0, 0, 0, 0);
+            for (const auto& contour : contours) {
+                double area = contourArea(contour);
+                if (area > max_area) {
+                    max_area = area;
+                    best_rect = boundingRect(contour);
+                }
+            }
+
+            // 面积阈值同样设为 10000 过滤噪点
+            if (max_area > 10000.0) {
+                // 【核心逻辑】：砍掉上侧 10% 和下侧 10%
+                int chop_h = best_rect.height * 0.10f;
+                best_rect.y += chop_h;
+                best_rect.height -= 2 * chop_h;
+
+                // 防止裁剪越界
+                best_rect &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
+
+                current_yolo_res.detected = true;
+                current_yolo_res.objects.clear();
+
+                ObjectMeta obj9;
+                obj9.bbox = best_rect;
+                obj9.center = Point2f(obj9.bbox.x + obj9.bbox.width / 2.0f, obj9.bbox.y + obj9.bbox.height / 2.0f);
+                obj9.class_id = 9;
+                obj9.confidence = 1.0f; // 虚拟置信度 100%
+                obj9.has_refined_center = false;
+
+                current_yolo_res.objects.push_back(obj9);
+                cout << ">>> [特殊模式] 截获 ID=9，成功提取最大 HSV 蓝色区域，并裁切上下 10%！" << endl;
+            } else {
+                current_yolo_res.detected = false;
+                cout << ">>> [特殊模式] 截获 ID=9，但视野内未发现足够大的蓝色区域！" << endl;
+            }
         }
         // ==========================================================
         // 【新增】：仅针对 DEMO001，直接使用画面中心偏移划定绝对安全框！
@@ -835,6 +874,82 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                         arm_target_pose.z /= -10.0;
                         arm_target_pose.x += g_arm_x_offset_cm[current_task.arm_id];
 
+                        // ==========================================================
+                        // 如果当前是 align91，则拦截并执行闭环对齐逻辑（这是偷懒，把align对齐功能插到这里来了）
+                        // ==========================================================
+                        if (current_task.raw_cmd == "align91") {
+                            float target_x = -13.0f; // ★ 你可以按需修改对齐的目标X坐标 （机械臂的参考系）
+                            float target_y = -8.0f; // ★ 你可以按需修改对齐的目标Y坐标 （机械臂的参考系）
+                            
+                            float dx = arm_target_pose.x - target_x;  
+                            float dy = arm_target_pose.y - target_y;  
+                            
+                            // 使用 PnP 解算出的 Z 轴旋转作为偏角
+                            float tilt_angle = obj.rz; 
+                            if (tilt_angle > 90.0f) tilt_angle -= 180.0f;
+                            else if (tilt_angle < -90.0f) tilt_angle += 180.0f;
+
+                            static float s_align_first_x = 0.0f;
+                            static float s_align_first_y = 0.0f;
+                            extern bool g_reset_align_memory;
+                            
+                            if (g_reset_align_memory) {
+                                if (std::abs(dx) > 30.0f || std::abs(dy) > 30.0f) {
+                                    cout << ">>> [视觉闭环防爆] 警告：初始PnP深度异常，拒绝锁定锚点！" << endl;
+                                } else {
+                                    s_align_first_x = arm_target_pose.x;
+                                    s_align_first_y = arm_target_pose.y;
+                                    g_reset_align_memory = false;
+                                    cout << ">>> [视觉闭环] 已锁定 align91 初始物理锚点 -> X:" << s_align_first_x << " Y:" << s_align_first_y << endl;
+                                }
+                            }
+
+                            cout << "\n>>> [视觉对齐] 目标 ID:9 | 边缘倾角:" << tilt_angle << "度" << endl;
+                            cout << ">>> [视觉对齐] 当前X:" << arm_target_pose.x << " Y:" << arm_target_pose.y << " | 原始偏差 dX:" << dx << " dY:" << dy << endl;
+
+                            // 小车(右+X, 前+Y) vs 机械臂(前-X, 右+Y)
+                            float move_fwd   = -dx;         
+                            float move_right = dy;        
+                            float turn_a     = tilt_angle;  
+
+                            std::cout << ">>> [视觉对齐] 解析到底盘动作 -> 需" << (move_fwd >= 0 ? "前进 " : "后退 ") << std::abs(move_fwd) 
+                                      << " cm | 需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right) 
+                                      << " cm | 需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" << std::endl;
+
+                            //这也是阈值
+                            if (std::abs(dx) < 3.0f && std::abs(dy) < 2.0f && std::abs(tilt_angle) < 10.0f) {
+                                cout << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << endl;
+                                
+                                if (!g_reset_align_memory) {
+                                    float real_fwd = arm_target_pose.x - s_align_first_x;
+                                    float real_right = -(arm_target_pose.y - s_align_first_y);
+
+                                    if (std::abs(real_fwd) > 0.5f || std::abs(real_right) > 0.5f) {
+                                        extern int g_serial_fd; 
+                                        if (g_serial_fd >= 0) {
+                                            char buf[128];
+                                            sprintf(buf, "NAV_ADJ %.2f %.2f 0.0\r\n", real_fwd, real_right);
+                                            write(g_serial_fd, buf, strlen(buf));
+                                            cout << ">>> [视觉闭环修正] 已下发纯视觉路径补偿: 前进 " << real_fwd << "cm, 右移 " << real_right << "cm" << endl;
+                                        }
+                                    }
+                                }
+
+                                extern bool g_wf_align_success;
+                                g_wf_align_success = true; 
+                            } else {
+                                cout << ">>> [视觉对齐] 误差超限，下发 ALIGN_MOVE 动作..." << endl;
+                                extern int g_serial_fd;
+                                if (g_serial_fd >= 0) {
+                                    char buf[128];
+                                    sprintf(buf, "ALIGN_MOVE %.1f %.1f %.1f\r\n", dx, dy, tilt_angle);
+                                    write(g_serial_fd, buf, strlen(buf));
+                                }
+                            }
+                            target_found = true;
+                            break; // 彻底拦截，绝对不往下走发 DEMO 指令的代码！
+                        }
+
                         if ((current_task.raw_cmd == "DEMO101" || current_task.raw_cmd == "DEMO102") && obj.corners_2d.size() == 4)
                         {
                             g_cl_state.base_corners_2d = obj.corners_2d;
@@ -904,6 +1019,18 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
     if (task.raw_cmd == "CHECK_003") {
         handleCheck003(raw_frame);
         return;
+    }
+    if (task.raw_cmd.rfind("align", 0) == 0) { 
+        if (task.raw_cmd == "align91") {
+            // 将 align91 伪装成一次 class_id=9 的抓取任务，让它跑完图像处理管线
+            DemoTask modified_task = task;
+            modified_task.class_id = 9;
+            modified_task.arm_id = 0; // 默认右臂
+            handleYoloAndPnP(modified_task, raw_frame);
+        } else {
+            handleAlign(task, raw_frame); 
+        }
+        return; 
     }
     // 处理巡航寻找逻辑
     if (task.raw_cmd.rfind("FIND_ACK_", 0) == 0)
@@ -1287,7 +1414,7 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
             cout << ">>> [单帧寻物] HSV 外框 PnP 解析成功 | 位于 ARM1_X: " << px << " cm, ARM1_Y: " << py << " cm" << endl;
 
             // ===== 底盘移动核心解算逻辑 =====
-            float target_x = -20.0f;
+            float target_x = -16.0f;
             float target_y = 8.0f;
             float forward_cm = target_x - px; 
             float right_cm = py - target_y;   
@@ -1611,4 +1738,357 @@ void VisionEngine::handleCheck003(Mat &raw_frame)
         cout << ">>> [视觉闭环] DEMO003 卡紧完毕！触发收尾指令 DEMO003_DONE" << endl;
         pilot_comm.sendDemoCommand("DEMO003_DONE", adj_pose);
     }
+}
+
+void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
+{
+    cout << "\n>>> [视觉对齐] 触发闭环 Align 引擎: " << task.raw_cmd << endl;
+
+    // 1. 解析目标参数
+    int arm_id = 0, class_id = 0;
+    float target_x = 0.0f, target_y = 0.0f;
+    
+    if (task.raw_cmd == "align01") { arm_id = 1; class_id = 3; target_x = -15.0f; target_y = 10.0f; }
+    else if (task.raw_cmd == "align02") { arm_id = 0; class_id = 0; target_x = -15.0f; target_y = -3.0f; }
+    else if (task.raw_cmd == "align03") { arm_id = 0; class_id = 2; target_x = -18.0f; target_y = 0.0f; }
+    else { cout << ">>> [错误] 未知的 align 指令！" << endl; return; }
+
+    // 2. 纯 HSV 蓝色提取框选
+    Mat hsv, mask;
+    cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
+    inRange(hsv, Scalar(100, 100, 50), Scalar(130, 255, 255), mask);
+    Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+    morphologyEx(mask, mask, MORPH_OPEN, kernel);
+    morphologyEx(mask, mask, MORPH_CLOSE, kernel);
+
+    vector<vector<Point>> contours;
+    findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+    // ==========================================================
+    // 【修改】：支持阵列方向性的智能目标锁定算法 (左/中/右切换)
+    // ==========================================================
+    static float s_last_align_move_right = 0.0f; // 静态记忆变量，记录上次横移方向
+
+    vector<int> valid_indices;
+    float max_area = 0.0f;
+    for (size_t i = 0; i < contours.size(); i++) {
+        float area = contourArea(contours[i]);
+        // 【核心优化 1】：阈值提升至 10000，直接无视所有微小噪点！
+        if (area < 10000.0f) continue; 
+        valid_indices.push_back(i);
+        if (area > max_area) max_area = area; // 找到画面中最大的蓝色面积
+    }
+
+    int best_idx = -1;
+    if (!valid_indices.empty()) {
+        
+        // 【核心优化 2】：align02 专属策略，直接霸道锁定全场最大蓝色块！
+        if (task.raw_cmd == "align02") {
+            for (int idx : valid_indices) {
+                if (contourArea(contours[idx]) >= max_area - 1.0f) {
+                    best_idx = idx;
+                    break;
+                }
+            }
+            cout << ">>> [视觉对齐] 策略激活: align02 专属，直接锁定画面中最大面积的蓝色区域！" << endl;
+        } 
+        else {
+            // align01 和 align03 继续走高精度的左右阵列记忆策略
+            bool use_memory_strategy = false;
+            enum LockStrategy { LOCK_CENTER, LOCK_LEFT, LOCK_RIGHT } strategy = LOCK_CENTER;
+
+            // 判断是否发生了较明显的横向修调
+            if (std::abs(s_last_align_move_right) > 0.5f) {
+                if (task.raw_cmd == "align01") {
+                    use_memory_strategy = true;
+                    // 01为左起阵列。车向右修，则目标偏左->锁左。车向左修，则锁中。
+                    if (s_last_align_move_right > 0.0f) strategy = LOCK_LEFT;
+                    else strategy = LOCK_CENTER;
+                } 
+                else if (task.raw_cmd == "align03") {
+                    use_memory_strategy = true;
+                    // 03为右起阵列。车向左修，则目标偏右->锁右。车向右修，则锁中。
+                    if (s_last_align_move_right < 0.0f) strategy = LOCK_RIGHT;
+                    else strategy = LOCK_CENTER;
+                }
+            }
+
+            if (use_memory_strategy) {
+                // 筛选条件：蓝色面积不能小于画面中最大目标面积的 70%
+                std::vector<int> candidate_indices;
+                for (int idx : valid_indices) {
+                    if (contourArea(contours[idx]) >= max_area * 0.7f) {
+                        candidate_indices.push_back(idx);
+                    }
+                }
+                
+                if (strategy == LOCK_LEFT) {
+                    float min_x = 1e9;
+                    for (int idx : candidate_indices) {
+                        Rect rect = boundingRect(contours[idx]);
+                        float cx = rect.x + rect.width / 2.0f;
+                        if (cx < min_x) { min_x = cx; best_idx = idx; }
+                    }
+                    cout << ">>> [视觉对齐] 策略激活: 寻找最左侧候选目标 (上次向右修调 " << s_last_align_move_right << "cm)" << endl;
+                } 
+                else if (strategy == LOCK_RIGHT) {
+                    float max_x = -1e9;
+                    for (int idx : candidate_indices) {
+                        Rect rect = boundingRect(contours[idx]);
+                        float cx = rect.x + rect.width / 2.0f;
+                        if (cx > max_x) { max_x = cx; best_idx = idx; }
+                    }
+                    cout << ">>> [视觉对齐] 策略激活: 寻找最右侧候选目标 (上次向左修调 " << std::abs(s_last_align_move_right) << "cm)" << endl;
+                } 
+                else {
+                    // LOCK_CENTER 策略：逆势修正，保守选取画面最中央的目标
+                    float min_dist = 1e9;
+                    Point2f img_center(raw_frame.cols / 2.0f, raw_frame.rows / 2.0f);
+                    for (int idx : candidate_indices) {
+                        Rect rect = boundingRect(contours[idx]);
+                        Point2f center(rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f);
+                        float dist = norm(center - img_center);
+                        if (dist < min_dist) { min_dist = dist; best_idx = idx; }
+                    }
+                    cout << ">>> [视觉对齐] 策略激活: 逆向修调防错，退保画面中心候选目标！" << endl;
+                }
+            } 
+            else {
+                // 默认兜底策略：离画面绝对中心最近的目标 (无记忆或初次运行)
+                float min_dist = 1e9;
+                Point2f img_center(raw_frame.cols / 2.0f, raw_frame.rows / 2.0f);
+                for (int idx : valid_indices) {
+                    Rect rect = boundingRect(contours[idx]);
+                    Point2f center(rect.x + rect.width / 2.0f, rect.y + rect.height / 2.0f);
+                    float dist = norm(center - img_center);
+                    if (dist < min_dist) { min_dist = dist; best_idx = idx; }
+                }
+            }
+        }
+    }
+
+    if (best_idx == -1) {
+        cout << ">>> [视觉对齐] 视野内未发现满足条件的蓝色物体，调整失败！" << endl;
+        s_last_align_move_right = 0.0f; // 发生丢失时清空记忆
+        return;
+    }
+
+    // ==========================================================
+    // 【UI 可视化】：在图传画面中实时绘制候选框与最终锁定框
+    // ==========================================================
+    for (int idx : valid_indices) {
+        Rect r = boundingRect(contours[idx]);
+        // 所有满足 10000 面积的蓝色块，用黄色细框标出
+        rectangle(raw_frame, r, Scalar(0, 255, 255), 2); 
+    }
+
+    Rect bbox = boundingRect(contours[best_idx]);
+    // 系统最终决定锁定的目标，用红色粗框标出，并配上文字
+    rectangle(raw_frame, bbox, Scalar(0, 0, 255), 4); 
+    putText(raw_frame, "ALIGN TARGET", Point(bbox.x, max(bbox.y - 10, 10)), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 0, 255), 2);
+    // ==========================================================
+
+    // 将外围框四周稍微放大 30 像素，防止切掉边缘检测线和角点
+    int expand_px = 30;
+    bbox.x -= expand_px; bbox.y -= expand_px;
+    bbox.width += expand_px * 2; bbox.height += expand_px * 2;
+    
+    Rect safe_bbox = bbox & Rect(0, 0, raw_frame.cols, raw_frame.rows);
+    if (safe_bbox.area() <= 0) return;
+
+    std::vector<Point2f> final_corners;
+    float tilt_angle = 0.0f;
+
+    // ==========================================================
+    // 3 & 4. 角点提取与倾角计算 (按 ID 分支)
+    // ==========================================================
+    if (class_id == 0) {
+        // --- ID=0: 局部送入 YOLO NEXT 提取 12 点，提取四大外围极值 ---
+        Mat roi_frame = raw_frame(safe_bbox);
+        std::vector<Point2f> raw_centers = runNextYoloInferenceRaw(roi_frame);
+        std::vector<Point2f> global_raw;
+        for (const auto &pt : raw_centers) {
+            global_raw.push_back(Point2f(pt.x + safe_bbox.x, pt.y + safe_bbox.y));
+        }
+        
+        std::vector<Point2f> pts = clusterPoints(global_raw, 12.0f);
+        
+        if (pts.size() < 4) {
+            cout << ">>> [视觉对齐] ID=0 提取角点不足！" << endl; return;
+        }
+
+        // ID=0 无遮挡，直接通过算术极值提取四大外围角点
+        Point2f P1 = pts[0], P4 = pts[0], P7 = pts[0], P10 = pts[0];
+        float min_x_minus_y = 1e9, max_x_plus_y = -1e9, max_x_minus_y = -1e9, min_x_plus_y = 1e9;
+        for (auto p : pts) {
+            if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }
+            if (p.x + p.y > max_x_plus_y) { max_x_plus_y = p.x + p.y; P4 = p; }
+            if (p.x - p.y > max_x_minus_y) { max_x_minus_y = p.x - p.y; P7 = p; }
+            if (p.x + p.y < min_x_plus_y) { min_x_plus_y = p.x + p.y; P10 = p; }
+        }
+        
+        std::vector<Point2f> corners = {P10, P7, P4, P1};
+        std::vector<Point2f> top, bot;
+        std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b) { return a.y < b.y; });
+        top.push_back(corners[0]); top.push_back(corners[1]);
+        bot.push_back(corners[2]); bot.push_back(corners[3]);
+        if (top[0].x > top[1].x) std::swap(top[0], top[1]);
+        if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
+        final_corners = {top[0], top[1], bot[1], bot[0]};
+
+        // ID=0 的倾角：直接利用 PnP 框的完美底边 (bot[0] 到 bot[1]) 计算
+        tilt_angle = atan2(bot[1].y - bot[0].y, bot[1].x - bot[0].x) * 180.0 / CV_PI;
+
+    } else {
+        // --- ID=2,3: 纯 HSV 提取轮廓，并复用 DEMO 级别的精准角点提取 ---
+        Mat roi_frame = raw_frame(safe_bbox);
+        Mat roi_mask = mask(safe_bbox); // 直接使用刚才二值化好的 HSV 掩码！
+        
+        std::vector<Point2f> local_corners;
+        bool feature_extracted = (class_id >= 1 && class_id <= 3) ? 
+                                 findWallCorners(roi_frame, local_corners, roi_mask, class_id) : 
+                                 findOrderedCorners(roi_frame, class_id, local_corners, roi_mask);
+        
+        if (feature_extracted && local_corners.size() == 4) {
+            final_corners.clear();
+            for (int i = 0; i < 4; i++) {
+                final_corners.push_back(Point2f(safe_bbox.x + local_corners[i].x, safe_bbox.y + local_corners[i].y));
+            }
+            cout << ">>> [视觉对齐] ID=" << class_id << " 成功复用精准角点提取！" << endl;
+        } else {
+            // 兜底方案：如果精准提取失败，退回最小外接矩形
+            RotatedRect rrect = minAreaRect(contours[best_idx]);
+            Point2f pts[4]; rrect.points(pts);
+            std::vector<Point2f> corners(pts, pts + 4);
+            std::vector<Point2f> top, bot;
+            std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b) { return a.y < b.y; });
+            top.push_back(corners[0]); top.push_back(corners[1]);
+            bot.push_back(corners[2]); bot.push_back(corners[3]);
+            if (top[0].x > top[1].x) std::swap(top[0], top[1]);
+            if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
+            final_corners = {top[0], top[1], bot[1], bot[0]};
+            cout << ">>> [视觉对齐] 警告：精准角点提取失败，退回 minAreaRect 兜底！" << endl;
+        }
+
+        // --- 计算倾角 (保留原有的高精度双通道边缘逻辑) ---
+        Rect bot_roi = safe_bbox;
+        bot_roi.y = bot_roi.y + bot_roi.height * 2 / 3;
+        bot_roi.height = bot_roi.height / 3;
+        bot_roi &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
+
+        if (bot_roi.area() > 0) {
+            Mat roi_hsv;
+            cvtColor(raw_frame(bot_roi), roi_hsv, COLOR_BGR2HSV);
+            vector<Mat> hsv_channels;
+            split(roi_hsv, hsv_channels);
+
+            Mat edges_s, edges_v, edges;
+            Canny(hsv_channels[1], edges_s, 10, 30);
+            Canny(hsv_channels[2], edges_v, 10, 30);
+            bitwise_or(edges_s, edges_v, edges);
+
+            vector<Vec4i> lines;
+            HoughLinesP(edges, lines, 1, CV_PI / 180, 15, bot_roi.width * 0.4, 10);
+
+            if (!lines.empty()) {
+                float sum_angle = 0; int count = 0;
+                for (auto &l : lines) {
+                    float a = atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI;
+                    if (abs(a) < 45.0f || abs(a) > 135.0f) { sum_angle += a; count++; }
+                }
+                if (count > 0) tilt_angle = sum_angle / count;
+            }
+        }
+    }
+
+    // 格式化角度到锐角相对偏差 (-90 到 90)
+    if (tilt_angle > 90.0f) tilt_angle -= 180.0f;
+    else if (tilt_angle < -90.0f) tilt_angle += 180.0f;
+
+    // ==========================================================
+    // 5. PnP 解算 
+    // ==========================================================
+    std::vector<Point3f> obj_pts_3d = get3DModelPoints(class_id);
+    Mat rvec, tvec;
+    if (solvePnP(obj_pts_3d, final_corners, CAMERA_MATRIX, DIST_COEFFS, rvec, tvec, false, cv::SOLVEPNP_ITERATIVE)) {
+        
+        // 转换至对应的机械臂物理坐标系
+        Pose6D arm_pose = calibrator.transform(rvec, tvec, arm_id);
+        arm_pose.x /= -10.0; arm_pose.y /= -10.0; arm_pose.z /= -10.0;
+        arm_pose.x += g_arm_x_offset_cm[arm_id];
+
+        // 提前计算偏差，用于防爆过滤
+        float dx = arm_pose.x - target_x;  
+        float dy = arm_pose.y - target_y;  
+
+        // ==========================================================
+        // 【防爆修复】：记录初次 PnP 坐标，加入常识过滤器！
+        // ==========================================================
+        static float s_align_first_x = 0.0f;
+        static float s_align_first_y = 0.0f;
+        extern bool g_reset_align_memory;
+        if (g_reset_align_memory) {
+            // 如果算出距目标超过 30cm，绝对是兜底矩形或运动模糊导致的透视畸变！
+            if (std::abs(dx) > 20.0f || std::abs(dy) > 20.0f) {
+                cout << ">>> [视觉闭环防爆] 警告：初始PnP深度异常 (X:" << arm_pose.x << " Y:" << arm_pose.y << ")，判定为噪点，拒绝锁定锚点！" << endl;
+            } else {
+                s_align_first_x = arm_pose.x;
+                s_align_first_y = arm_pose.y;
+                g_reset_align_memory = false;
+                cout << ">>> [视觉闭环] 已锁定初始物理锚点 -> 机械臂前(X):" << s_align_first_x << " cm, 右(Y):" << s_align_first_y << " cm" << endl;
+            }
+        }
+        
+        cout << "\n>>> [视觉对齐] 目标 ID:" << class_id << " | 边缘倾角:" << tilt_angle << "度" << endl;
+        cout << ">>> [视觉对齐] 当前X:" << arm_pose.x << " Y:" << arm_pose.y << " | 原始偏差 dX:" << dx << " dY:" << dy << endl;
+
+        // 【最严谨轴向映射】：小车(右+X, 前+Y) vs 机械臂(前-X, 右+Y)
+        float move_fwd   = -dx;         
+        float move_right = dy;        
+        float turn_a     = tilt_angle;  
+
+        std::cout << ">>> [视觉对齐] 解析到底盘动作 -> "
+                  << "需" << (move_fwd >= 0 ? "前进 " : "后退 ") << std::abs(move_fwd) << " cm | "
+                  << "需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right) << " cm | "
+                  << "需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" 
+                  << std::endl;
+
+        //误差阈值
+        if (std::abs(dx) < 3.0f && std::abs(dy) < 2.0f && std::abs(tilt_angle) < 10.0f) {
+            cout << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << endl;
+            
+            // 只有当成功锁定过真实锚点时，才下发补偿
+            if (!g_reset_align_memory) {
+                float real_fwd = arm_pose.x - s_align_first_x;
+                float real_right = -(arm_pose.y - s_align_first_y);
+
+                if (std::abs(real_fwd) > 0.5f || std::abs(real_right) > 0.5f) {
+                    if (g_serial_fd >= 0) {
+                        char buf[128];
+                        sprintf(buf, "NAV_ADJ %.2f %.2f 0.0\r\n", real_fwd, real_right);
+                        write(g_serial_fd, buf, strlen(buf));
+                        cout << ">>> [视觉闭环修正] 已下发纯视觉路径补偿: 前进 " << real_fwd << "cm, 右移 " << real_right << "cm" << endl;
+                    }
+                }
+            }
+
+            s_last_align_move_right = 0.0f; 
+            extern bool g_wf_align_success;
+            g_wf_align_success = true; 
+        } else {
+            if (task.raw_cmd == "align01" || task.raw_cmd == "align02" || task.raw_cmd == "align03") {
+                s_last_align_move_right = move_right; 
+            }
+            
+            cout << ">>> [视觉对齐] 误差超限，下发 ALIGN_MOVE 动作..." << endl;
+            if (g_serial_fd >= 0) {
+                char buf[128];
+                sprintf(buf, "ALIGN_MOVE %.1f %.1f %.1f\r\n", dx, dy, tilt_angle);
+                write(g_serial_fd, buf, strlen(buf));
+            }
+        }
+    } else {
+        cout << ">>> [视觉对齐] PnP 收敛失败！" << endl;
+    }
+
 }

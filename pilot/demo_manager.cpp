@@ -456,7 +456,9 @@ namespace DemoManager
                         //usleep(2000000);
                         g_arm.moveSmooth(0, px - 3.0f, py + 17.5f, 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(2000000);
-                        g_arm.moveSmooth(0, px - 3.0f, py + 16.5f, -0.8f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(0, px - 3.0f, py + 16.5f, -0.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        usleep(1000000);
+                        g_arm.moveSmooth(0, px - 3.0f, py + 16.5f, -1.2f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(500000);
                         g_arm.setServoAngle(0, 6, Arm0_open);
                         usleep(800000);

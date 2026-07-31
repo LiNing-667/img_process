@@ -164,6 +164,16 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         std::cout << "\n>>> [Pilot] 收到find移动指令 CHASSIS_MOVE" << std::endl;
         DemoManager::executeChassisAutoMove(px, py);
     }
+    else if (strcmp(cmd, "MOVE") == 0) {
+        std::cout << "\n>>> [Pilot] 收到全局路径规划目标 -> X:" << px << " Y:" << py << " Yaw:" << pz << std::endl;
+        g_car.planPath(px, py, pz);
+    }
+    else if (strcmp(cmd, "ALIGN_MOVE") == 0) {
+        g_car.executeAlignManeuver(px, py, pz);
+    }
+    else if (strcmp(cmd, "NAV_ADJ") == 0) {
+        g_car.applyNavAdjustment(px, py);
+    }
     else if (num == 11 && (strcmp(cmd, "ARM0") == 0 || strcmp(cmd, "ARM1") == 0)) {
         int arm_id = (strcmp(cmd, "ARM0") == 0) ? 0 : 1;
         std::cout << "\n>>> [Pilot] 接收单步: " << cmd << " | X=" << px << " Y=" << py << " Z=" << pz << std::endl;

@@ -29,6 +29,7 @@ private:
     void handleCheck001(cv::Mat &raw_frame);
     void handleCheck002(cv::Mat &raw_frame);
     void handleCheck003(cv::Mat &raw_frame);
+    void handleAlign(const DemoTask &task, cv::Mat &raw_frame);
 
 public:
     VisionEngine(PilotCommunicator &comm);

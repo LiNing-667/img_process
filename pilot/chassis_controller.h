@@ -23,6 +23,11 @@ private:
     std::atomic<float> curr_x_{0}, curr_y_{0}, curr_yaw_{0};
     std::atomic<float> target_x_{0}, target_y_{0}, target_yaw_{0};
 
+    // 新增：全局导航坐标记录仪
+    float nav_x_{0.0f};
+    float nav_y_{0.0f};
+    float nav_yaw_{0.0f};
+
     long last_m1 = 0, last_m2 = 0, last_m3 = 0, last_m4 = 0;
     bool first_encoder = true;
     std::atomic<bool> is_testing_{false};
@@ -46,6 +51,11 @@ public:
     void turnRelative(float deg);
     void setVelocity(float vx, float vy, float vw);
     void stopVelocity();
+
+    // 新增：路径规划核心方法
+    void planPath(float tx, float ty, float tyaw);
+    void applyNavAdjustment(float real_fwd, float real_right);
+    void executeAlignManeuver(float dx, float dy, float dyaw);
 };
 
 extern ChassisController g_car;
