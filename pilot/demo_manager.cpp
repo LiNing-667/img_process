@@ -103,6 +103,7 @@ namespace DemoManager
                         usleep(1000000);
                         // g_arm.moveSmooth(0, px-2 , py + 5.2f, pz + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
                         g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
+                        sendToMonitor("DEMO_DONE\r\n");
                     })
             .detach();
     }
@@ -158,6 +159,7 @@ namespace DemoManager
                         usleep(1500000);
                         g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
                         usleep(1000000);
+                        sendToMonitor("DEMO_DONE\r\n");
                     })
             .detach();
     }
@@ -182,6 +184,7 @@ namespace DemoManager
                         g_arm.moveSmooth(0, px, py + 6.0f, pz + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(1500000);
                         g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
+                        sendToMonitor("DEMO_DONE\r\n");
                     })
             .detach();
     }
@@ -264,6 +267,7 @@ namespace DemoManager
                         usleep(500000);
                         g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
                         usleep(1000000);
+                        sendToMonitor("DEMO_DONE\r\n");
                     })
             .detach();
     }
@@ -378,7 +382,7 @@ namespace DemoManager
             usleep(1000000);
             g_arm.moveSmooth(1, -5, 14 , 7 , 0 , 0.2 , -0.916 , -1, 0, 0); 
             usleep(1000000);
-            g_arm.moveSmooth(0, -9, 0.5 , 7.2 , 0 , 0, -1, -1, 0, 0); 
+            g_arm.moveSmooth(0, -8.5, -0.3 , 7.2 , 0 , 0, -1, -1, 0, 0);  //key
             usleep(2000000);
             g_arm.setServoAngle(0, 6, Arm0_close); 
             usleep(1000000);
@@ -390,8 +394,6 @@ namespace DemoManager
             usleep(1800000);
             g_arm.moveSmooth(1, -3, 0 , 11 , 0 , 0, -1, -1, 0, 0); 
             usleep(1800000);
-            g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
-            usleep(1000000);
 
             if (g_has_cache_091) {
                 float px = g_cache_091_px;
@@ -419,7 +421,7 @@ namespace DemoManager
 
                 //视觉闭环
                 g_arm.moveSmooth(0, px -0.5f, py + 14.5f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-                g_arm.moveSmooth(0, px -2.2f, py + 10.5f , 6.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+                g_arm.moveSmooth(0, px -2.2f, py + 10.0f , 6.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
                 //停止移动，向 Monitor 请求拍照验核
                 std::cout << ">>> [闭环] 右臂就位，请求上位机执行边缘校验..." << std::endl;
                 sendToMonitor("CHECK_091\r\n");
@@ -463,6 +465,7 @@ namespace DemoManager
                         g_arm.setServoAngle(0, 6, Arm0_open);
                         usleep(800000);
                         g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
+                        sendToMonitor("DEMO_DONE\r\n");
                     })
             .detach();
     }
@@ -477,7 +480,7 @@ namespace DemoManager
             std::cout << "\n>>> [DEMO092] 闭环微调执行中..." << std::endl;
             
             g_arm.moveSmooth(0, px -0.5f, py + 14.5f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
-            g_arm.moveSmooth(0, px -1.5f, py + 10.5f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
+            g_arm.moveSmooth(0, px -1.5f, py + 10.0f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(2000000);
 
             // 执行完微调后，再次呼叫 Monitor
             sendToMonitor("CHECK_091\r\n");
@@ -494,7 +497,7 @@ namespace DemoManager
             float px_arm1 = px + 1.2f;  // X 轴标定误差补偿
             float py_arm1 = py + 20.0f;  // Y 轴平移厘米，对齐物理空间
 
-            g_arm.moveSmooth(0, px -1.5f, py + 9.5f , 6.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1000000);
+            g_arm.moveSmooth(0, px -1.5f, py + 9.0f , 6.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1000000);
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
 
             g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
@@ -505,7 +508,7 @@ namespace DemoManager
             usleep(1000000);
             g_arm.moveSmooth(0, -8, 10 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
             usleep(1000000);
-            
+            sendToMonitor("DEMO_DONE\r\n");
 
         }).detach();
     }
@@ -573,6 +576,7 @@ namespace DemoManager
             usleep(1000000);
             g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
             usleep(1000000);
+            sendToMonitor("DEMO_DONE\r\n");
         }).detach();
     }
 
@@ -679,6 +683,7 @@ namespace DemoManager
             usleep(1000000);
             g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁 
             usleep(1000000);
+            sendToMonitor("DEMO_DONE\r\n");
 
         }).detach();
     }

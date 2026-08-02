@@ -58,7 +58,7 @@ void RoboticArmController::setJointsDirect(int arm_id, const std::vector<float> 
         setServoAngle(arm_id, ch_offset + 2, angles[2] + 110.0f);
         setServoAngle(arm_id, ch_offset + 3, -angles[3] + 110.0f);
         setServoAngle(arm_id, ch_offset + 4, (180.0f - angles[4]) + 12.0f);
-        setServoAngle(arm_id, ch_offset + 5, angles[5] + 99.0f);
+        setServoAngle(arm_id, ch_offset + 5, angles[5] + 102.0f);
     } else {
         setServoAngle(arm_id, ch_offset + 0, angles[0] + 108.0f);
         setServoAngle(arm_id, ch_offset + 1, angles[1] + 108.0f);
@@ -118,7 +118,7 @@ void RoboticArmController::moveRawChannelsSmooth(int arm_id, const std::vector<f
             start_raw[2] = curr.current_angles[2] + 110.0f;
             start_raw[3] = -curr.current_angles[3] + 110.0f;
             start_raw[4] = (180.0f - curr.current_angles[4]) + 12.0f;
-            start_raw[5] = curr.current_angles[5] + 99.0f;
+            start_raw[5] = curr.current_angles[5] + 102.0f; // 99
         } else {
             start_raw[0] = curr.current_angles[0] + 108.0f;
             start_raw[1] = curr.current_angles[1] + 108.0f;
@@ -135,7 +135,7 @@ void RoboticArmController::moveRawChannelsSmooth(int arm_id, const std::vector<f
         curr.current_angles[2] = target_raw_angles[2] - 110.0f;
         curr.current_angles[3] = -(target_raw_angles[3] - 110.0f);
         curr.current_angles[4] = 180.0f - (target_raw_angles[4] - 12.0f);
-        curr.current_angles[5] = target_raw_angles[5] - 99.0f;
+        curr.current_angles[5] = target_raw_angles[5] - 102.0f;
     } else {
         curr.current_angles[0] = target_raw_angles[0] - 108.0f;
         curr.current_angles[1] = (target_raw_angles[1] - 108.0f);

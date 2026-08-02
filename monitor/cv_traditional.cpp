@@ -3,6 +3,7 @@
  * @brief 传统 OpenCV 图像处理与极值特征提取
  */
 #include "cv_traditional.h"
+#include "global_state.h"
 #include <iostream>
 #include <algorithm>
 
@@ -30,10 +31,14 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
         r_right &= Rect(0, 0, roi_frame.cols, roi_frame.rows);
         r_bottom &= Rect(0, 0, roi_frame.cols, roi_frame.rows);
         std::vector<Mat> patches;
-        if (r_left.area() > 0) patches.push_back(blurred(r_left));
-        if (r_right.area() > 0) patches.push_back(blurred(r_right));
-        if (r_bottom.area() > 0) patches.push_back(blurred(r_bottom));
-        if (patches.empty()) return false;
+        if (r_left.area() > 0)
+            patches.push_back(blurred(r_left));
+        if (r_right.area() > 0)
+            patches.push_back(blurred(r_right));
+        if (r_bottom.area() > 0)
+            patches.push_back(blurred(r_bottom));
+        if (patches.empty())
+            return false;
         cv::vconcat(patches, sample_patch);
     }
     else
@@ -51,7 +56,8 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
         }
         Rect center_patch_rect(sample_pt.x - p_size / 2, sample_pt.y - p_size / 2, p_size, p_size);
         center_patch_rect &= Rect(0, 0, roi_frame.cols, roi_frame.rows);
-        if (center_patch_rect.area() <= 0) return false;
+        if (center_patch_rect.area() <= 0)
+            return false;
         sample_patch = blurred(center_patch_rect);
     }
     Scalar mean_val, stddev_val;
@@ -63,11 +69,40 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
     Mat close_kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
     morphologyEx(mask, mask, MORPH_OPEN, open_kernel);
     morphologyEx(mask, mask, MORPH_CLOSE, close_kernel);
-    mask.copyTo(out_mask);
+
+    // ==========================================================
+    // 在角点提取前，强制保留最大的白色连通域，其余全部涂黑
+    // ==========================================================
+    if (class_id == 9)
+    {
+        vector<vector<Point>> temp_contours;
+        findContours(mask, temp_contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+        if (!temp_contours.empty())
+        {
+            int max_idx = 0;
+            double max_area = 0;
+            for (size_t i = 0; i < temp_contours.size(); i++)
+            {
+                double area = contourArea(temp_contours[i]);
+                if (area > max_area)
+                {
+                    max_area = area;
+                    max_idx = i;
+                }
+            }
+            // 创建全黑画布，仅把面积最大的连通域画上去（涂白）
+            Mat clean_mask = Mat::zeros(mask.size(), CV_8UC1);
+            drawContours(clean_mask, temp_contours, max_idx, Scalar(255), FILLED);
+            mask = clean_mask; // 覆盖回原 mask，彻底消灭孤立噪点
+        }
+    }
+    
+    mask.copyTo(out_mask); // 将纯净的图形输出给调试窗口
 
     vector<vector<Point>> contours;
     findContours(mask, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
-    if (contours.empty()) return false;
+    if (contours.empty())
+        return false;
     double max_area = 0;
     vector<Point> best_contour;
     for (const auto &c : contours)
@@ -79,39 +114,125 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
             best_contour = c;
         }
     }
-    if (max_area < roi_frame.cols * roi_frame.rows * 0.05) return false;
+    if (max_area < roi_frame.cols * roi_frame.rows * 0.05)
+        return false;
     RotatedRect rect = minAreaRect(best_contour);
     Point2f rect_pts[4];
     rect.points(rect_pts);
     Point2f center = rect.center;
 
     std::vector<Point2f> corners;
-    for (int i = 0; i < 4; i++)
+
+    // ==========================================================
+    // 【新增】：基于霍夫直线交点的高鲁棒性四边形提取 (无视外挂杂斑与突起)
+    // ==========================================================
+    if (class_id == 9)
     {
-        Point2f v_dir = rect_pts[i] - center;
-        double max_dot = -1e9;
-        Point2f best_pt;
-        for (const auto &cp : best_contour)
-        {
-            Point2f pt(cp.x, cp.y);
-            Point2f v_pt = pt - center;
-            double dot_prod = v_pt.x * v_dir.x + v_pt.y * v_dir.y;
-            if (dot_prod > max_dot)
-            {
-                max_dot = dot_prod;
-                best_pt = pt;
+        Mat edge_mask;
+        Canny(mask, edge_mask, 50, 150);
+        vector<Vec4i> lines;
+        HoughLinesP(edge_mask, lines, 1, CV_PI / 180, 20, 20, 10);
+
+        Vec4i l_t(0,0,0,0), l_b(0,0,0,0), l_l(0,0,0,0), l_r(0,0,0,0);
+        float len_t = 0, len_b = 0, len_l = 0, len_r = 0;
+        int cx = mask.cols / 2;
+        int cy = mask.rows / 2;
+
+        // 1. 在四个象限中分别寻找最长的边缘直线
+        for (const auto& l : lines) {
+            float dx = l[2] - l[0], dy = l[3] - l[1];
+            float len = std::sqrt(dx*dx + dy*dy);
+            
+            // 计算线段中点
+            int mx = std::round((l[0] + l[2]) / 2.0f);
+            int my = std::round((l[1] + l[3]) / 2.0f);
+
+            // 防止中点越界
+            mx = std::max(0, std::min(mask.cols - 1, mx));
+            my = std::max(0, std::min(mask.rows - 1, my));
+
+            if (std::abs(dx) > std::abs(dy)) { // 横向线
+                if (my < cy && len > len_t) { 
+                    len_t = len; l_t = l; 
+                }
+                else if (my >= cy && len > len_b) { 
+                    // 【极性校验】：下边缘直线的上方必须是白色(主体)，下方必须是黑色(背景)
+                    int check_dist = 5; // 探测距离设为 5 像素
+                    
+                    // 检查上方 (y 减小)
+                    bool is_white_above = (my - check_dist >= 0) ? (mask.at<uchar>(my - check_dist, mx) > 0) : true;
+                    // 检查下方 (y 增大)
+                    bool is_black_below = (my + check_dist < mask.rows) ? (mask.at<uchar>(my + check_dist, mx) == 0) : true;
+
+                    if (is_white_above && is_black_below) {
+                        len_b = len; 
+                        l_b = l; 
+                    }
+                }
+            } else { // 纵向线
+                if (mx < cx && len > len_l) { len_l = len; l_l = l; }
+                else if (mx >= cx && len > len_r) { len_r = len; l_r = l; }
             }
         }
-        corners.push_back(best_pt);
+
+        // 2. 如果四条边界线都找到了，利用克莱姆法则求两两交点
+        if (len_t > 0 && len_b > 0 && len_l > 0 && len_r > 0) {
+            auto intersect = [](Vec4i l1, Vec4i l2) -> Point2f {
+                float A1 = l1[3] - l1[1], B1 = l1[0] - l1[2], C1 = A1 * l1[0] + B1 * l1[1];
+                float A2 = l2[3] - l2[1], B2 = l2[0] - l2[2], C2 = A2 * l2[0] + B2 * l2[1];
+                float det = A1 * B2 - A2 * B1;
+                if (std::abs(det) < 1e-5) return Point2f(-1, -1); // 平行无交点
+                return Point2f((C1 * B2 - C2 * B1) / det, (A1 * C2 - A2 * C1) / det);
+            };
+
+            Point2f tl = intersect(l_t, l_l); // 上与左交于左上
+            Point2f tr = intersect(l_t, l_r); // 上与右交于右上
+            Point2f bl = intersect(l_b, l_l); // 下与左交于左下
+            Point2f br = intersect(l_b, l_r); // 下与右交于右下
+
+            // 校验数学交点是否有效
+            if (tl.x != -1 && tr.x != -1 && bl.x != -1 && br.x != -1) {
+                corners = {tl, tr, br, bl};
+                std::cout << ">>> [霍夫四边形] ID=9 | 成功利用 4 条最长边界线延长相交获取完美四角！" << std::endl;
+            }
+        }
     }
+    // ==========================================================
+
+    // 如果交点提取失败（比如某条边破损太严重没提取到长线），退回原始的点乘极值法兜底
+    if (corners.empty())
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            Point2f v_dir = rect_pts[i] - center;
+            double max_dot = -1e9;
+            Point2f best_pt;
+            for (const auto &cp : best_contour)
+            {
+                Point2f pt(cp.x, cp.y);
+                Point2f v_pt = pt - center;
+                double dot_prod = v_pt.x * v_dir.x + v_pt.y * v_dir.y;
+                if (dot_prod > max_dot)
+                {
+                    max_dot = dot_prod;
+                    best_pt = pt;
+                }
+            }
+            corners.push_back(best_pt);
+        }
+    }
+
     std::vector<Point2f> top, bot;
-    std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b) { return a.y < b.y; });
+    std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b)
+              { return a.y < b.y; });
     top.push_back(corners[0]);
     top.push_back(corners[1]);
     bot.push_back(corners[2]);
     bot.push_back(corners[3]);
-    if (top[0].x > top[1].x) std::swap(top[0], top[1]);
-    if (bot[0].x > bot[1].x) std::swap(bot[0], bot[1]);
+    if (top[0].x > top[1].x)
+        std::swap(top[0], top[1]);
+    if (bot[0].x > bot[1].x)
+        std::swap(bot[0], bot[1]);
     ordered_corners = {top[0], top[1], bot[1], bot[0]};
     return true;
 }

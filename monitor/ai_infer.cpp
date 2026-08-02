@@ -21,6 +21,11 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
 {
     YoloResult result;
     result.detected = false;
+
+    // 【新增】：跨帧记忆变量，用于第二层保险
+    static cv::Rect s_last_bbox = cv::Rect(0, 0, 0, 0);
+    static int s_last_class_id = -1;
+
     if (!is_ncnn_loaded)
     {
         yolo_ncnn.opt.use_vulkan_compute = false;
@@ -85,7 +90,6 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
         std::vector<AnchorData> candidates;
 
         // 收集所有及格的候选框 (单纯的一维数组遍历，几乎不耗时)
-        // 收集所有及格的候选框 (单纯的一维数组遍历，几乎不耗时)
         for (int i = 0; i < num_anchors; i++)
         {
             float score = out.row(c)[i];
@@ -103,16 +107,16 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
                 // ==========================================================
                 // 【新增空间过滤】：滤除 ID=0 时出现在画面左侧 2/7 区域的误检框
                 // ==========================================================
-                if (target_class_id == 0) {
+                if (target_class_id == 0)
+                {
                     float box_center_x = (left + right) / 2.0f;
-                    float left_deadzone = frame.cols * (2.0f / 7.0f); // 计算左侧死区边界
-                    
-                    if (box_center_x < left_deadzone) {
-                        continue; // 如果框的中心点在死区内，直接抛弃，不进入 NMS！
-                    }
+                    float left_deadzone = frame.cols * (2.0f / 7.0f);
+                    if (box_center_x < left_deadzone)
+                        continue;
                 }
 
-                candidates.push_back({i, score, Rect(left, top, right - left, bottom - top)});
+                Rect current_bbox(left, top, right - left, bottom - top);
+                candidates.push_back({i, score, current_bbox});
             }
         }
 
@@ -136,7 +140,7 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
                     float inter_area = (cand.bbox & kept.bbox).area();
                     float union_area = cand.bbox.area() + kept.bbox.area() - inter_area;
                     if (union_area > 0 && (inter_area / union_area) > 0.45f)
-                    { // IoU 阈值 45%
+                    {
                         keep = false;
                         break;
                     }
@@ -144,49 +148,35 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
                 if (keep)
                 {
                     nms_results.push_back(cand);
-                    // 【算力狂飙点 2：物理上限抢占式截断】
-                    // 只要确认画面里已经找齐了 3 个独立物体，哪怕 candidates 里还有框，也直接强制结束 NMS 循环！
-                    if (nms_results.size() >= 3)
-                        break;
+                    // 删除了原有的 size() >= 3 强制 break 的地雷，保留所有合法物体
                 }
             }
 
             // ==============================================================
-            // 3. 关键逻辑升级：带“置信度保护”的最左侧优先策略
-            // ==============================================================
+            AnchorData best_conf_obj = nms_results[0]; // 得分最高者
+            AnchorData final_choice = best_conf_obj;   // 默认兜底为最高分
 
-            // 因为前面 partial_sort 已经按得分排过序，所以第 0 个绝对是全场得分最高的
-            AnchorData best_conf_obj = nms_results[0];
-
-            // 遍历寻找画面中最左侧的物体
-            AnchorData leftmost_obj = nms_results[0];
-            for (const auto &res : nms_results)
+            // 【最左侧物理优先】：无条件选得分 ≥ 0.25 的最左侧框
             {
-                if (res.bbox.x < leftmost_obj.bbox.x)
+                std::vector<AnchorData> sorted_by_x = nms_results;
+                std::sort(sorted_by_x.begin(), sorted_by_x.end(), [](const AnchorData &a, const AnchorData &b)
+                          { return a.bbox.x < b.bbox.x; });
+
+                for (const auto &res : sorted_by_x)
                 {
-                    leftmost_obj = res;
+                    if (res.score >= 0.25f)
+                    {
+                        final_choice = res;
+                        if (final_choice.idx != best_conf_obj.idx)
+                            cout << ">>> [AI 决策] 触发最左侧优先！(选中得分:" << res.score << " vs 最高分:" << best_conf_obj.score << ")" << endl;
+                        break;
+                    }
                 }
-            }
-
-            // 【核心判决】：计算最高分与最左侧得分的落差
-            AnchorData final_choice;
-            if (best_conf_obj.score - leftmost_obj.score > 0.4f)
-            {
-                // 如果右边的完美物体比左边的残次品高出 0.4 分以上，放弃左边，保护抓取成功率！
-                final_choice = best_conf_obj;
-                cout << ">>> [AI 决策拦截] 最左侧物体得分(" << leftmost_obj.score
-                     << ") 远低于最高分(" << best_conf_obj.score << ")，已强制锁定右侧高分目标！" << endl;
-            }
-            else
-            {
-                // 如果大家都挺清晰的（分差 <= 0.4），那就老老实实按物理位置，抓最左边的！
-                final_choice = leftmost_obj;
             }
 
             best_anchor_idx = final_choice.idx;
             best_score = final_choice.score;
         }
-
         if (best_anchor_idx != -1)
         {
             float cx = out.row(0)[best_anchor_idx], cy = out.row(1)[best_anchor_idx];
@@ -269,6 +259,10 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
             }
             // ====================================================
 
+            // 更新记忆锁定框，供下一帧（或下个Demo）使用
+            s_last_bbox = obj.bbox;
+            s_last_class_id = target_class_id;
+
             result.objects.push_back(obj);
             cout << "[AI 专属锁定] 类别 ID: " << obj.class_id << " | 置信度: " << obj.confidence << endl;
         }
@@ -295,7 +289,8 @@ std::vector<cv::Point2f> runNextYoloInferenceRaw(const cv::Mat &roi_frame)
         }
         is_next_ncnn_loaded = true;
     }
-    if (roi_frame.empty() || roi_frame.cols <= 0 || roi_frame.rows <= 0) return centers;
+    if (roi_frame.empty() || roi_frame.cols <= 0 || roi_frame.rows <= 0)
+        return centers;
 
     const int INPUT_SIZE = 320;
     int w = roi_frame.cols, h = roi_frame.rows;
@@ -328,9 +323,11 @@ std::vector<cv::Point2f> runNextYoloInferenceRaw(const cv::Mat &roi_frame)
         float max_score = 0.0f;
         for (int c = 4; c < num_channels; c++)
         {
-            if (out.row(c)[i] > max_score) max_score = out.row(c)[i];
+            if (out.row(c)[i] > max_score)
+                max_score = out.row(c)[i];
         }
-        if (max_score > global_max_score) global_max_score = max_score;
+        if (max_score > global_max_score)
+            global_max_score = max_score;
         if (max_score > conf_threshold)
         {
             float cx = out.row(0)[i], cy = out.row(1)[i];

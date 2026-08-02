@@ -24,8 +24,10 @@ extern float g_cam_pan;
 extern float g_cam_tilt;
 
 extern std::atomic<bool> g_wf_chassis_done;
+extern std::atomic<bool> g_wf_demo_done; // DEMOxxx 指令执行完毕
+extern std::atomic<bool> g_wf_cmd_done;  // DOxxx / MR / MQ 等直通指令完成
 extern std::atomic<bool> g_wf_find_failed;
-extern float g_arm_x_offset_cm[2];// 拆分为数组：0对应ARM0(右臂)，1对应ARM1(左臂)
+extern float g_arm_x_offset_cm[2]; // 拆分为数组：0对应ARM0(右臂)，1对应ARM1(左臂)
 
 // --- 新增：HSV 视觉伺服与云台记忆 ---
 extern float g_calibrated_pan;
@@ -42,3 +44,7 @@ extern float g_cache_091_pz;
 extern cv::Point2f g_cache_pt1; // 锚点：1号点
 extern float g_cache_001_px, g_cache_001_py, g_cache_001_pz;
 extern float g_cache_002_px, g_cache_002_py, g_cache_002_pz;
+
+// --- align91 参考线（供断崖斜切等模块读取）---
+extern cv::Vec4i g_align91_ref_line;
+extern bool g_align91_ref_line_valid;
