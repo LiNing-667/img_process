@@ -2039,7 +2039,7 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
     {
         arm_id = 0;
         class_id = 0;
-        target_x = -14.0f;
+        target_x = -15.0f;
         target_y = -9.0f;
     }
     else if (task.raw_cmd == "align03")
@@ -2421,7 +2421,7 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
                   << std::endl;
 
         // 误差阈值 (align02 放宽 dy 和 tilt)
-        float th_dx  = (task.raw_cmd == "align02") ? 3.0f : 3.0f, th_dy = (task.raw_cmd == "align02") ? 4.0f : 2.0f, th_tilt = (task.raw_cmd == "align02") ? 40.0f : 3.0f;
+        float th_dx  = (task.raw_cmd == "align02") ? 3.0f : 3.0f, th_dy = (task.raw_cmd == "align02") ? 3.0f : 2.0f, th_tilt = (task.raw_cmd == "align02") ? 40.0f : 3.0f;
         if (std::abs(dx) < th_dx && std::abs(dy) < th_dy && std::abs(tilt_angle) < th_tilt)
         {
             cout << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << endl;

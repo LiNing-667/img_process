@@ -86,17 +86,17 @@ void processTextCommand(const std::string &cmd_line)
             std::cout << "=============================================\n" << std::endl;
 
             // ---- 事件驱动等待器 (替换所有 usleep) ----
-            auto wait_demo = [](int timeout_ms = 35000) {
+            auto wait_demo = [](int timeout_ms = 350000) {
                 g_wf_demo_done = false;
                 while (!g_wf_demo_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] DEMO 未在时限内完成！" << std::endl;
             };
-            auto wait_cmd = [](int timeout_ms = 15000) {
+            auto wait_cmd = [](int timeout_ms = 150000) {
                 g_wf_cmd_done = false;
                 while (!g_wf_cmd_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 直通指令未在时限内完成！" << std::endl;
             };
-            auto wait_chassis = [](int timeout_ms = 20000) {
+            auto wait_chassis = [](int timeout_ms = 200000) {
                 g_wf_chassis_done = false;
                 while (!g_wf_chassis_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 底盘未在时限内到达！" << std::endl;
@@ -124,7 +124,15 @@ void processTextCommand(const std::string &cmd_line)
                 }
                 wait_demo();
             };
-
+            auto do_031_sequence = [&]() {
+                std::cout << "\n>>> [动作链] 下发 DO031 (换手)，并等待视觉闭环装配全流程完成..." << std::endl;
+                if (g_serial_fd >= 0) {
+                    std::string full_cmd = "DO031\r\n";
+                    write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
+                }
+                // 调用 wait_demo 监听 DEMO_DONE 信号 (g_wf_demo_done)
+                wait_demo(); 
+            };
             // 直通下发任意单指令
             auto send_raw = [&](const std::string& cmd) {
                 std::cout << "\n>>> [动作链] 强插直通指令: " << cmd << std::endl;
@@ -134,6 +142,7 @@ void processTextCommand(const std::string &cmd_line)
                 }
                 wait_cmd();
             };
+
             // ==========================================================
             // 【新增核心】：全自动闭环对齐 A/B 状态机循环引擎
             // ==========================================================
@@ -204,21 +213,21 @@ void processTextCommand(const std::string &cmd_line)
 
             send_raw("MR");
             //抓连接件1
-            move_car(-25, 35, -90);          
+            move_car(-25, 45, -90);          
             auto_align_loop("align01");
             do_vision_demo(1, 3, 1, "DEMO131");
             //抓底座1
-            move_car(-5, 80, -90);  
+            move_car(-10, 90, -90);  
             auto_align_loop("align02");
             do_vision_demo(0, 0, 0, "DEMO000");
             usleep(1500000);
             //拼1
-            move_car(25, 80, 90);
+            move_car(20, 90, 90);
             auto_align_loop("align91");
             do_vision_demo(0, 9, 1, "DEMO091");
-            send_raw("DO031");
+            do_031_sequence();
             //抓墙1
-            move_car(10, 90, 0);
+            move_car(10, 100, 0);
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼2
@@ -230,7 +239,7 @@ void processTextCommand(const std::string &cmd_line)
             auto_align_loop("align04");
             do_vision_demo(1, 1, 1, "DEMO111");
             //抓墙2
-            move_car(-5, 90, 0);
+            move_car(-5, 100, 0);
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼3
@@ -238,11 +247,11 @@ void processTextCommand(const std::string &cmd_line)
             auto_align_loop("align93");
             do_vision_demo(0, 0, 2, "DEMO002");
             //抓连接件2
-            move_car(-25, 45, -90);          
+            move_car(-25, 55, -90);          
             auto_align_loop("align01");
             do_vision_demo(1, 3, 1, "DEMO131");
             //抓底座2
-            move_car(-25, 80, -90);  
+            move_car(-25, 90, -90);  
             auto_align_loop("align02");
             do_vision_demo(0, 0, 0, "DEMO000");
             usleep(1500000);

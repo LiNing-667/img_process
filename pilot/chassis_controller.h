@@ -7,6 +7,45 @@
 #include <thread>
 #include <atomic>
 
+// ==============================================================
+// 底盘动力与物理标定全局配置
+// 集中管理所有和重量、摩擦力、惯性相关的“魔数”，方便换配重后统一调参
+// ==============================================================
+struct ChassisDynamicsConfig {
+    // 1. 底层 PID 动力参数限制
+    float PID_MIN_POWER = 120.0f;  // 克服静摩擦的最小 PWM/速度 (起步死区)
+    float PID_MAX_POWER = 400.0f;  // 输出上限
+    float RAMP_STEP_X = 15.0f;     // 前后加速度斜率
+    float RAMP_STEP_Y = 8.0f;      // 左右加速度斜率 (防侧滑)
+    float RAMP_STEP_YAW = 15.0f;   // 旋转加速度斜率
+
+    // 2. 开环基础动力指令值 (对应发送给下位机的速度设定)
+    float CMD_SPEED_BASE = 300.0f; // 主要平移动力 (Align和PlanPath使用)
+    float CMD_KICK_SPEED = 300.0f; // 短距离微动补偿动力 (moveRelative使用)
+
+    // 3. 物理速度映射标定 (时间估算核心！)
+    // 公式：行驶时间 = 距离 / (对应的_CM_PER_SEC)
+    float CM_PER_SEC_FWD = 25.0f;  // 在CMD_SPEED_BASE下，前后每秒跑几厘米
+    float CM_PER_SEC_LAT = 20.0f;  // 在CMD_SPEED_BASE下，左右每秒跑几厘米
+    float DEG_PER_SEC_TURN = 30.0f;// 旋转每秒估算度数
+    float KICK_CM_PER_SEC = 25.0f; // 在CMD_KICK_SPEED下，微动每秒跑几厘米
+
+    // PlanPath 中单独调用的移动/旋转指令速度参数
+    float PLAN_MOVE_SPEED = 25.0f; 
+    float PLAN_TURN_SPEED = 45.0f;
+
+    // 4. 起步/刹车物理延时补偿 (秒/毫秒)
+    float T_COMP_STARTUP_SEC = 0.5f;       // 标准起步防滑延时 (0.5秒)
+    float T_COMP_SHORT_STARTUP_SEC = 0.1f; // 极短程微调延时 (0.1秒)
+    int   WAIT_MS_OFFSET = 500;            // 各种动作后默认的停顿缓冲 (500毫秒)
+    
+    // 横向位移削弱系数 (AlignManeuver 中的避让比例)
+    float LAT_DIAG_RATIO = 0.4f; 
+};
+
+// 实例化为全局配置
+extern ChassisDynamicsConfig g_dynamics;
+
 class ChassisController {
 private:
     int fd_;
@@ -52,7 +91,7 @@ public:
     void setVelocity(float vx, float vy, float vw);
     void stopVelocity();
 
-    // 新增：路径规划核心方法
+    // 路径规划
     void planPath(float tx, float ty, float tyaw);
     void applyNavAdjustment(float real_fwd, float real_right);
     void executeAlignManeuver(float dx, float dy, float dyaw);

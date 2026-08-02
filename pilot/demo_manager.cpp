@@ -382,7 +382,7 @@ namespace DemoManager
             usleep(1000000);
             g_arm.moveSmooth(1, -5, 14 , 7 , 0 , 0.2 , -0.916 , -1, 0, 0); 
             usleep(1000000);
-            g_arm.moveSmooth(0, -8.5, -0.3 , 7.2 , 0 , 0, -1, -1, 0, 0);  //key
+            g_arm.moveSmooth(0, -8.0, -0.3 , 7.2 , 0 , 0, -1, -1, 0, 0);  //key
             usleep(2000000);
             g_arm.setServoAngle(0, 6, Arm0_close); 
             usleep(1000000);

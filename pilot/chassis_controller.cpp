@@ -12,6 +12,10 @@
 #include <termios.h>
 #include <algorithm>
 
+// 初始化全局动力配置实例
+ChassisDynamicsConfig g_dynamics;
+ChassisController g_car;
+
 ChassisController::ChassisController() : fd_(-1), running_(false) {}
 
 int ChassisController::initPort(const char *portname)
@@ -88,7 +92,9 @@ void ChassisController::parseEncoder(const std::string &msg)
 void ChassisController::pidLoop()
 {
     float kp_x = 3.0f, kp_y = 3.0f, kp_yaw = 15.0f, ki_yaw = 0.2f, integral_yaw = 0.0f;
-    float MIN_POWER = 120.0f, MAX_POWER = 400.0f;
+    // 使用全局动力配置替换硬编码
+    float MIN_POWER = g_dynamics.PID_MIN_POWER;
+    float MAX_POWER = g_dynamics.PID_MAX_POWER;
     int retry_counter = 0;
     float last_vx = 0.0f, last_vy = 0.0f, last_vw = 0.0f;
 
@@ -187,9 +193,10 @@ void ChassisController::pidLoop()
                 return target;
             };
 
-            vx = ramp(last_vx, target_vx, 15.0f);
-            vy = ramp(last_vy, target_vy, 8.0f);
-            vw = ramp(last_vw, target_vw, 15.0f);
+            // 使用全局动力配置替换斜率硬编码
+            vx = ramp(last_vx, target_vx, g_dynamics.RAMP_STEP_X);
+            vy = ramp(last_vy, target_vy, g_dynamics.RAMP_STEP_Y);
+            vw = ramp(last_vw, target_vw, g_dynamics.RAMP_STEP_YAW);
 
             last_vx = vx;
             last_vy = vy;
@@ -267,7 +274,13 @@ void ChassisController::blindTest()
                 {
         is_testing_ = true; usleep(50000);      
         std::cout << "\n>>> [物理层排查] 盲走测试开始 (纯开环 2 秒) <<<" << std::endl;
-        sendCmd("$spd:250,250,250,250#"); usleep(2000000); 
+        
+        // 盲走测试同步替换为基准测试速度
+        char cmd[64];
+        int spd = (int)g_dynamics.CMD_SPEED_BASE;
+        sprintf(cmd, "$spd:%d,%d,%d,%d#", spd, spd, spd, spd);
+        sendCmd(cmd); 
+        usleep(2000000); 
         sendCmd("$spd:0,0,0,0#"); usleep(10000);
         sendCmd("$mtype:1#"); 
         std::cout << "\n>>> [物理层排查] 盲走测试结束，已切断动力。 <<<\n" << std::endl;
@@ -325,11 +338,11 @@ void ChassisController::moveRelative(float dx_cm, float dy_cm)
         std::thread([this, dx_cm, dy_cm, dist]()
                     {
             // 设置一个能绝对克服静摩擦力的基础速度 (建议在 150~250 之间)
-            float kick_speed = 200.0f; 
+            float kick_speed = g_dynamics.CMD_KICK_SPEED; 
             
             // 估算时间：假设速度200对应约 15cm/s，那么 1cm 大概需要 0.066 秒
-            // 这里的 15.0f 是基准标定值，你可以根据小车实际爆发速度微调
-            float time_sec = dist / 15.0f; 
+            // 这里的标定值已抽离为 g_dynamics.KICK_CM_PER_SEC，可以根据小车实际爆发速度微调
+            float time_sec = dist / g_dynamics.KICK_CM_PER_SEC; 
             int sleep_us = (int)(time_sec * 1000000);
 
             // 计算 X 和 Y 方向的速度分量
@@ -378,8 +391,6 @@ void ChassisController::stopVelocity()
     target_yaw_ = curr_yaw_.load();
 }
 
-ChassisController g_car;
-
 void ChassisController::planPath(float tx, float ty, float tyaw)
 {
     std::thread([this, tx, ty, tyaw]()
@@ -399,7 +410,8 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                         if (dist < 0.5f)
                             return;
                         this->moveRelative(forward_cm, right_cm);
-                        int wait_ms = (int)((dist / speed) * 1000) + 500;
+                        // 使用全局缓冲常数
+                        int wait_ms = (int)((dist / speed) * 1000) + g_dynamics.WAIT_MS_OFFSET;
                         usleep(wait_ms * 1000);
                     };
 
@@ -408,7 +420,8 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                         if (std::abs(deg) < 1.0f)
                             return;
                         this->turnRelative(deg);
-                        int wait_ms = (int)((std::abs(deg) / speed) * 1000) + 500;
+                        // 使用全局缓冲常数
+                        int wait_ms = (int)((std::abs(deg) / speed) * 1000) + g_dynamics.WAIT_MS_OFFSET;
                         usleep(wait_ms * 1000);
                     };
 
@@ -435,14 +448,14 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                     if (std::abs(dyaw) > 179.0f)
                     {
                         // 拔出工位：后退 15cm
-                        move_wait(-15.0f, 0.0f, 15.0f);
+                        move_wait(-15.0f, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
 
                         // 同步更新全局里程碑（套用正运动学）
                         nav_x_ += -15.0f * std::sin(rad);
                         nav_y_ += -15.0f * std::cos(rad);
 
-                        // 让底盘执行一次 180 度的连续旋转
-                        turn_wait(180.0f, 45.0f);
+                        // 让底盘执行一次 180 度的连续旋转 （补了10 度）
+                        turn_wait(190.0f, g_dynamics.PLAN_TURN_SPEED);
 
                         nav_yaw_ = normalize_yaw(nav_yaw_ + 180.0f);
                         dyaw = 0.0f;
@@ -466,9 +479,9 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                             if (std::abs(dx_local) < 15.0f)
                             {
                                 float dist_total = std::sqrt(dx_local * dx_local + dy_local * dy_local);
-                                float speed = 250.0f;
-                                float cm_per_sec = 18.0f;
-                                float time_sec = dist_total / cm_per_sec + 0.5f;
+                                float speed = g_dynamics.CMD_SPEED_BASE;
+                                float cm_per_sec = g_dynamics.CM_PER_SEC_FWD; // 斜向综合按照前向参数预估
+                                float time_sec = dist_total / cm_per_sec + g_dynamics.T_COMP_STARTUP_SEC;
 
                                 float vx = (dy_local / dist_total) * speed;
                                 float vy = (dx_local / dist_total) * speed;
@@ -489,28 +502,28 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
 
                                 if (std::abs(first_y) > 0.5f)
                                 {
-                                    move_wait(first_y, 0.0f, 15.0f);
+                                    move_wait(first_y, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
                                 }
 
                                 if (dx_local > 0)
                                 {
-                                    turn_wait(90.0f, 45.0f);
-                                    move_wait(dx_local, 0.0f, 15.0f);
-                                    turn_wait(-90.0f, 45.0f);
+                                    turn_wait(90.0f, g_dynamics.PLAN_TURN_SPEED);
+                                    move_wait(dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                                    turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
                                 }
                                 else
                                 {
-                                    turn_wait(-90.0f, 45.0f);
-                                    move_wait(-dx_local, 0.0f, 15.0f);
-                                    turn_wait(90.0f, 45.0f);
+                                    turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
+                                    move_wait(-dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                                    turn_wait(90.0f, g_dynamics.PLAN_TURN_SPEED);
                                 }
 
-                                move_wait(15.0f, 0.0f, 15.0f);
+                                move_wait(15.0f, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
                             }
                         }
                         else
                         {
-                            move_wait(dy_local, 0.0f, 15.0f);
+                            move_wait(dy_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
                         }
                     }
                     // ==============================================================
@@ -518,10 +531,10 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                     // ==============================================================
                     else if (std::abs(dyaw) > 89.0f && std::abs(dyaw) < 91.0f)
                     {
-                        move_wait(dy_local, 0.0f, 15.0f);
-                        turn_wait(dyaw, 45.0f);
+                        move_wait(dy_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                        turn_wait(dyaw, g_dynamics.PLAN_TURN_SPEED);
                         float move_after = (dyaw > 0) ? dx_local : -dx_local;
-                        move_wait(move_after, 0.0f, 15.0f);
+                        move_wait(move_after, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
                     }
 
                     // 终点状态结算
@@ -561,9 +574,10 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
                   << "需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" 
                   << std::endl;
 
-        float speed_base = 250.0f;    
-        float cm_per_sec_fwd = 18.0f; 
-        float cm_per_sec_lat = 15.0f; 
+        // 改为调用全局动力配置
+        float speed_base = g_dynamics.CMD_SPEED_BASE;    
+        float cm_per_sec_fwd = g_dynamics.CM_PER_SEC_FWD; 
+        float cm_per_sec_lat = g_dynamics.CM_PER_SEC_LAT; 
         float back_dist = 0.0f;       
 
         // ==========================================================
@@ -574,32 +588,37 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
         if (std::abs(turn_a) > 2.0f) {
             std::cout << ">>> [底盘开环对齐] 动作1: 复合旋转补偿..." << std::endl;
             
-            // 【完美对称】：统一步伐，设定固定的安全拔出距离（10 厘米）
             float retreat_cm = 10.0f;
-            float t_move = retreat_cm / cm_per_sec_fwd + 0.5f; // 加入 0.5s 起步补偿的物理时间
+            float t_move = retreat_cm / cm_per_sec_fwd + g_dynamics.T_COMP_STARTUP_SEC; 
             
-            // 【新增】：横向避让削弱系数。0.2 代表左右平移的速度只有后退速度的 20%
-            float lat_ratio = 0.4f;
+            // 采用你的正切补偿思路：计算偏航角对应的弧度
+            float rad = std::abs(turn_a) * M_PI / 180.0f;
+            
+            // 将所需横向距离转化为平滑的横向分速度
+            // 乘以 (CM_PER_SEC_FWD / CM_PER_SEC_LAT) 是为了消除麦轮横纵阻力不同的物理差异
+            float vy_diag_abs = speed_base * std::tan(rad) * (cm_per_sec_fwd / cm_per_sec_lat);
+            
+            // 限制一个最大横移速度，防止角度过大时暴走
+            vy_diag_abs = std::min(vy_diag_abs, speed_base * 0.5f);
 
-            // 1. 斜向后退拔出工位（大幅削弱横向漂移的力度）
-            float vy_diag = (turn_a < 0) ? (speed_base * lat_ratio) : -(speed_base * lat_ratio); 
+            // 决定左右方向
+            float vy_diag = (turn_a < 0) ? vy_diag_abs : -vy_diag_abs; 
+
+            // 1. 平滑斜向后退拔出
             this->setVelocity(-speed_base, vy_diag, 0.0f);
             usleep((int)(t_move * 1000000));
             this->stopVelocity();
             
-            // 2. 停顿 0.5 秒，彻底消除底盘惯性
             usleep(500000); 
 
-            // 3. 底盘闭环原地旋转
+            // 2. 底盘原地闭环旋转
             this->turnRelative(turn_a);
-            int wait_ms = (int)((std::abs(turn_a) / 45.0f) * 1000) + 500;
+            int wait_ms = (int)((std::abs(turn_a) / g_dynamics.DEG_PER_SEC_TURN) * 1000) + g_dynamics.WAIT_MS_OFFSET;
             usleep(wait_ms * 1000);
-
-            // 4. 旋转结束后，强制停顿 0.5 秒缓冲
             usleep(500000);
 
-            // 5. 纯直线前进插回（完全对称！进退一模一样，直接使用刚才的 t_move）
-            this->setVelocity(speed_base, 0.0f, 0.0f);
+            // 3. 原路斜向插回 (前后速度反转，左右速度也要反转以抵消刚才的横移！)
+            this->setVelocity(speed_base, -vy_diag, 0.0f);
             usleep((int)(t_move * 1000000)); 
             this->stopVelocity();
             usleep(300000);
@@ -623,8 +642,8 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
             float target_fwd = move_fwd + back_dist;
             if (std::abs(target_fwd) > 1.0f) {
                 std::cout << ">>> [底盘开环对齐] 动作2附带: 纵向切入..." << std::endl;
-                // 无论距离多短，纵向切入强制加上 0.5 秒起步时间补偿！
-                float t_fwd = std::abs(target_fwd) / cm_per_sec_fwd + 0.1f;
+                // 纵向切入强制加上起步时间补偿！
+                float t_fwd = std::abs(target_fwd) / cm_per_sec_fwd + g_dynamics.T_COMP_SHORT_STARTUP_SEC;
                 float vx_val = (target_fwd > 0) ? speed_base : -speed_base; 
                 this->setVelocity(vx_val, 0.0f, 0.0f);
                 usleep((int)(t_fwd * 1000000));
@@ -643,8 +662,8 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
                 // 【完美对称】：设定一个明确的后退距离（比如 10.0 厘米）
                 float retreat_cm = 10.0f; 
                 
-                // 1. 后退阶段：距离换算时间，并同样加上 0.5 秒起步补偿！
-                float t_back = retreat_cm / cm_per_sec_fwd + 0.5f;
+                // 1. 后退阶段：距离换算时间，并同样加上起步补偿！
+                float t_back = retreat_cm / cm_per_sec_fwd + g_dynamics.T_COMP_STARTUP_SEC;
                 this->setVelocity(-speed_base, 0.0f, 0.0f);
                 usleep((int)(t_back * 1000000)); 
                 this->stopVelocity();
@@ -652,9 +671,9 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
                 // 2. 停顿 0.5 秒，让底盘彻底停稳，消除惯性，清空串口
                 usleep(500000);
                 
-                // 3. 前进阶段：原需前进的距离 + 刚才后退补偿的距离，再现加 0.5 秒起步！
+                // 3. 前进阶段：原需前进的距离 + 刚才后退补偿的距离，再现加起步！
                 float total_fwd_cm = move_fwd + retreat_cm;
-                float t_fwd = total_fwd_cm / cm_per_sec_fwd + 0.5f;
+                float t_fwd = total_fwd_cm / cm_per_sec_fwd + g_dynamics.T_COMP_STARTUP_SEC;
                 
                 this->setVelocity(speed_base, 0.0f, 0.0f);
                 usleep((int)(t_fwd * 1000000));
@@ -669,7 +688,7 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
 
                 // 1. 深度后退阶段：一次性后退到底（原需后退的距离 + 多退的补偿距离）
                 float total_back_cm = std::abs(move_fwd) + retreat_cm;
-                float t_back = total_back_cm / cm_per_sec_fwd + 0.5f;
+                float t_back = total_back_cm / cm_per_sec_fwd + g_dynamics.T_COMP_STARTUP_SEC;
                 
                 this->setVelocity(-speed_base, 0.0f, 0.0f); // 负数代表后退
                 usleep((int)(t_back * 1000000)); 
@@ -679,7 +698,7 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
                 usleep(500000);
 
                 // 3. 前进折返阶段：向前开回刚才多退的距离
-                float t_fwd = retreat_cm / cm_per_sec_fwd + 0.5f;
+                float t_fwd = retreat_cm / cm_per_sec_fwd + g_dynamics.T_COMP_STARTUP_SEC;
                 
                 this->setVelocity(speed_base, 0.0f, 0.0f); // 正数代表前进
                 usleep((int)(t_fwd * 1000000));
