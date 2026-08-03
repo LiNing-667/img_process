@@ -1,7 +1,3 @@
-/**
- * @file arm_controller.cpp
- * @brief 机械臂控制中枢
- */
 #include "arm_controller.h"
 #include "hw_i2c.h"
 #include "pilot_config.h"
@@ -11,6 +7,12 @@
 #include <unistd.h>
 #include <thread>
 #include <algorithm>
+
+// ==========================================================
+// 【新增】：定义全局速度变量
+// ==========================================================
+float g_arm_spatial_speed = 15.0f; // 默认空间移动速度 15 cm/s
+float g_arm_angle_speed = 60.0f;   // 默认姿态旋转速度 60 度/s
 
 void RoboticArmController::normalizeVec(float v[3]) {
     float len = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
@@ -84,26 +86,55 @@ void RoboticArmController::moveSmooth(int arm_id, float t_px, float t_py, float 
     if (!curr.initialized) {
         setJointsDirect(arm_id, tgt);
         for (int i=0; i<6; i++) curr.current_angles[i] = tgt[i];
-        curr.initialized = true; return;
+        
+        // 初始化时记录当前物理坐标
+        curr.last_px = t_px; curr.last_py = t_py; curr.last_pz = t_pz;
+        curr.initialized = true; 
+        return;
     }
+
+    // ==========================================================
+    // 【核心重构】：计算直线距离与所需时间
+    // ==========================================================
+    // 1. 计算三维空间欧氏距离
+    float dist = std::sqrt(std::pow(t_px - curr.last_px, 2) + 
+                           std::pow(t_py - curr.last_py, 2) + 
+                           std::pow(t_pz - curr.last_pz, 2));
+    float time_from_dist = dist / g_arm_spatial_speed;
+
+    // 2. 计算关节旋转角度所需时间（防止距离极小但姿态翻转引发过载）
+    float max_angle_diff = 0.0f; 
+    for(int i=0; i<6; i++) {
+        max_angle_diff = std::max(max_angle_diff, std::abs(tgt[i] - curr.current_angles[i]));
+    }
+    float time_from_angle = max_angle_diff / g_arm_angle_speed;
+
+    // 3. 最终耗时取大者，并设立 0.1 秒的极小值保底
+    float time_sec = std::max(time_from_dist, time_from_angle);
+    time_sec = std::max(time_sec, 0.1f);
+
+    int steps = std::max(1, (int)(time_sec / 0.02f));
     std::vector<float> start(curr.current_angles, curr.current_angles + 6);
+
+    // 提前更新内部状态，防止被新指令打断时坐标产生丢失
     for (int i=0; i<6; i++) curr.current_angles[i] = tgt[i];
+    curr.last_px = t_px; curr.last_py = t_py; curr.last_pz = t_pz;
 
-    std::thread([this, arm_id, start, tgt, my_version]() {
-        float max_angle_diff = 0.0f; 
-        for(int i=0; i<6; i++) max_angle_diff = std::max(max_angle_diff, std::abs(tgt[i] - start[i]));
-        float speed_deg_per_sec = 60.0f; float loop_delay_sec = 0.02f;    
-        int steps = std::max(1, (int)(max_angle_diff / (speed_deg_per_sec * loop_delay_sec)));
+    // ==========================================================
+    // 【核心重构】：移除 std::thread，使其在当前调用线程中阻塞执行
+    // ==========================================================
+    for (int i = 1; i <= steps; ++i) {
+        // 中断机制依然有效，如果别的线程发了新指令，退出当前循环交出控制权
+        if (cmd_version_ != my_version) return; 
+        
+        float ratio = (float)i / steps;
         std::vector<float> current_step_angles(6);
-
-        for (int i = 1; i <= steps; ++i) {
-            if (cmd_version_ != my_version) return; 
-            float ratio = (float)i / steps;
-            for(int j=0; j<6; j++) current_step_angles[j] = start[j] + (tgt[j] - start[j]) * ratio;
-            setJointsDirect(arm_id, current_step_angles); 
-            usleep(20000); 
-        } 
-    }).detach();
+        for(int j=0; j<6; j++) {
+            current_step_angles[j] = start[j] + (tgt[j] - start[j]) * ratio;
+        }
+        setJointsDirect(arm_id, current_step_angles); 
+        usleep(20000); // 20ms 的物理控制帧率
+    } 
 }
 
 void RoboticArmController::moveRawChannelsSmooth(int arm_id, const std::vector<float> &target_raw_angles, float time_sec) {

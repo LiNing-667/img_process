@@ -13,7 +13,7 @@
 // ==============================================================
 struct ChassisDynamicsConfig {
     // 1. 底层 PID 动力参数限制
-    float PID_MIN_POWER = 120.0f;  // 克服静摩擦的最小 PWM/速度 (起步死区)
+    float PID_MIN_POWER = 200.0f;  // 克服静摩擦的最小 PWM/速度 (起步死区)
     float PID_MAX_POWER = 400.0f;  // 输出上限
     float RAMP_STEP_X = 15.0f;     // 前后加速度斜率
     float RAMP_STEP_Y = 8.0f;      // 左右加速度斜率 (防侧滑)

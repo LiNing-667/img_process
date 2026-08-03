@@ -7,12 +7,19 @@
 #include <atomic>
 #include <stdint.h>
 
+extern float g_arm_spatial_speed; // 空间直线移动速度 (cm/s)
+extern float g_arm_angle_speed;// 姿态旋转角速度 (deg/s)
+
 class RoboticArmController {
 private:
     struct ArmState {
         bool initialized = false;
         float p[3]; float z[3]; float x[3];
         float current_angles[6];
+        // 【新增】：记录末端上一次的三维坐标
+        float last_px = 0.0f; 
+        float last_py = 0.0f; 
+        float last_pz = 0.0f; 
     };
     int i2c_addr_;
     ArmState states_[2];

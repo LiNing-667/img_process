@@ -220,14 +220,13 @@ void processTextCommand(const std::string &cmd_line)
             move_car(-10, 90, -90);  
             auto_align_loop("align02");
             do_vision_demo(0, 0, 0, "DEMO000");
-            usleep(1500000);
             //拼1
-            move_car(20, 90, 90);
+            move_car(25, 90, 90);
             auto_align_loop("align91");
             do_vision_demo(0, 9, 1, "DEMO091");
             do_031_sequence();
             //抓墙1
-            move_car(10, 100, 0);
+            move_car(0, 100, 0);
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼2

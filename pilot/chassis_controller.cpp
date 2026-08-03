@@ -91,7 +91,7 @@ void ChassisController::parseEncoder(const std::string &msg)
 
 void ChassisController::pidLoop()
 {
-    float kp_x = 3.0f, kp_y = 3.0f, kp_yaw = 15.0f, ki_yaw = 0.2f, integral_yaw = 0.0f;
+    float kp_x = 3.0f, kp_y = 3.0f, kp_yaw = 15.0f, ki_yaw = 0.2f, integral_yaw = 0.0f; 
     // 使用全局动力配置替换硬编码
     float MIN_POWER = g_dynamics.PID_MIN_POWER;
     float MAX_POWER = g_dynamics.PID_MAX_POWER;
@@ -182,7 +182,7 @@ void ChassisController::pidLoop()
             { return std::max(-max_v, std::min(max_v, v)); };
             target_vx = limit(target_vx, MAX_POWER);
             target_vy = limit(target_vy, MAX_POWER);
-            target_vw = limit(target_vw, 300.0f / K);
+            target_vw = limit(target_vw, 300.0f / K);  //旋转力度
 
             auto ramp = [](float current, float target, float step)
             {
@@ -617,8 +617,8 @@ void ChassisController::executeAlignManeuver(float dx, float dy, float dyaw)
             usleep(wait_ms * 1000);
             usleep(500000);
 
-            // 3. 原路斜向插回 (前后速度反转，左右速度也要反转以抵消刚才的横移！)
-            this->setVelocity(speed_base, -vy_diag, 0.0f);
+            // 3. 纯直线插回 (因为第一步的斜向后退已经把旋转带来的横向偏差预先抵消了，现在车头已经完全正对靶心！)
+            this->setVelocity(speed_base, 0.0f, 0.0f);
             usleep((int)(t_move * 1000000)); 
             this->stopVelocity();
             usleep(300000);

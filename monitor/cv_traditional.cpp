@@ -138,7 +138,7 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
         int cx = mask.cols / 2;
         int cy = mask.rows / 2;
 
-        // 1. 在四个象限中分别寻找最长的边缘直线
+        // 1. 在四个象限中寻找 上、左、右 最长的边缘直线 (废弃原有的底边直接查找)
         for (const auto& l : lines) {
             float dx = l[2] - l[0], dy = l[3] - l[1];
             float len = std::sqrt(dx*dx + dy*dy);
@@ -155,27 +155,71 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
                 if (my < cy && len > len_t) { 
                     len_t = len; l_t = l; 
                 }
-                else if (my >= cy && len > len_b) { 
-                    // 【极性校验】：下边缘直线的上方必须是白色(主体)，下方必须是黑色(背景)
-                    int check_dist = 5; // 探测距离设为 5 像素
-                    
-                    // 检查上方 (y 减小)
-                    bool is_white_above = (my - check_dist >= 0) ? (mask.at<uchar>(my - check_dist, mx) > 0) : true;
-                    // 检查下方 (y 增大)
-                    bool is_black_below = (my + check_dist < mask.rows) ? (mask.at<uchar>(my + check_dist, mx) == 0) : true;
-
-                    if (is_white_above && is_black_below) {
-                        len_b = len; 
-                        l_b = l; 
-                    }
-                }
+                // 注意：旧的底边 l_b 的霍夫查找已经被废弃，下面会用新算法计算
             } else { // 纵向线
                 if (mx < cx && len > len_l) { len_l = len; l_l = l; }
                 else if (mx >= cx && len > len_r) { len_r = len; l_r = l; }
             }
         }
 
-        // 2. 如果四条边界线都找到了，利用克莱姆法则求两两交点
+        // ==========================================================
+        // 【新算法】：利用已知的上边缘向下平移扫描，寻找真实的底边
+        // ==========================================================
+        if (len_t > 0) {
+            // 计算上边缘的斜率 k 和截距 b
+            float k = (float)(l_t[3] - l_t[1]) / (l_t[2] - l_t[0] + 1e-5f);
+            float b_line = l_t[1] - k * l_t[0];
+            
+            int x_min = std::min(l_t[0], l_t[2]);
+            int x_max = std::max(l_t[0], l_t[2]);
+            
+            // 左右缩进 15%，只扫描中间 70% 的主体区域，完美避开左右圆角和侧边干扰
+            int margin = (x_max - x_min) * 0.15f; 
+            int scan_x_start = x_min + margin;
+            int scan_x_end = x_max - margin;
+            
+            if (scan_x_end > scan_x_start) {
+                int best_d = -1;
+                
+                // 让这条线从上边缘开始，1像素1像素地往下平移 (d 为下移量)
+                for (int d = 5; d < mask.rows; d++) {
+                    int white_count = 0;
+                    int total_count = 0;
+                    
+                    // 遍历当前扫描线上的所有点
+                    for (int x = scan_x_start; x <= scan_x_end; x++) {
+                        int y = std::round(k * x + b_line + d);
+                        if (y >= 0 && y < mask.rows) {
+                            if (mask.at<uchar>(y, x) > 128) {
+                                white_count++;
+                            }
+                            total_count++;
+                        }
+                    }
+                    
+                    if (total_count == 0) break;
+                    
+                    float white_ratio = (float)white_count / total_count;
+                    
+                    // 【核心判断】：当白点比例跌破 90%，意味着这条线碰到了底部的缺口或黑色的背景
+                    // 这就是你描述的“从上下都白，变成了下面有黑”的临界点！
+                    if (white_ratio < 0.90f) {
+                        best_d = d - 2; // 稍微往回退 2 个像素，确保线完全落在主体白边上
+                        break;
+                    }
+                }
+                
+                // 将下移量应用，直接构造出一条与上边绝对平行的底边！
+                if (best_d != -1) {
+                    l_b[0] = l_t[0]; l_b[1] = l_t[1] + best_d;
+                    l_b[2] = l_t[2]; l_b[3] = l_t[3] + best_d;
+                    len_b = len_t; // 赋予一个伪长度使后续的交点逻辑生效
+                    std::cout << ">>> [底边扫描] 成功利用上边缘平移法锁定真实底边！下移量: " << best_d << " 像素" << std::endl;
+                }
+            }
+        }
+
+        // 2. 依然利用克莱姆法则，求四条线的两两交点 (这套数学逻辑无缝衔接)
         if (len_t > 0 && len_b > 0 && len_l > 0 && len_r > 0) {
             auto intersect = [](Vec4i l1, Vec4i l2) -> Point2f {
                 float A1 = l1[3] - l1[1], B1 = l1[0] - l1[2], C1 = A1 * l1[0] + B1 * l1[1];
@@ -193,11 +237,10 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
             // 校验数学交点是否有效
             if (tl.x != -1 && tr.x != -1 && bl.x != -1 && br.x != -1) {
                 corners = {tl, tr, br, bl};
-                std::cout << ">>> [霍夫四边形] ID=9 | 成功利用 4 条最长边界线延长相交获取完美四角！" << std::endl;
+                std::cout << ">>> [霍夫四边形] ID=9 | 成功利用 4 条边界线延长相交获取完美四角！" << std::endl;
             }
         }
     }
-    // ==========================================================
 
     // 如果交点提取失败（比如某条边破损太严重没提取到长线），退回原始的点乘极值法兜底
     if (corners.empty())

@@ -17,14 +17,13 @@ static bool is_ncnn_loaded = false;
 static ncnn::Net next_yolo_ncnn;
 static bool is_next_ncnn_loaded = false;
 
+cv::Rect g_last_locked_bbox = cv::Rect(0, 0, 0, 0);
+int g_last_locked_class_id = -1;
+
 YoloResult runYoloInference(const Mat &frame, int target_class_id)
 {
     YoloResult result;
     result.detected = false;
-
-    // 【新增】：跨帧记忆变量，用于第二层保险
-    static cv::Rect s_last_bbox = cv::Rect(0, 0, 0, 0);
-    static int s_last_class_id = -1;
 
     if (!is_ncnn_loaded)
     {
@@ -156,7 +155,39 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
             AnchorData best_conf_obj = nms_results[0]; // 得分最高者
             AnchorData final_choice = best_conf_obj;   // 默认兜底为最高分
 
-            // 【最左侧物理优先】：无条件选得分 ≥ 0.25 的最左侧框
+            // 【对齐锁定优先】：如果上一帧有锁定的目标，优先选离它最近且置信度≥0.25的框
+            bool locked = (g_last_locked_bbox.area() > 0 && g_last_locked_class_id == target_class_id);
+            if (locked)
+            {
+                Point2f last_center(g_last_locked_bbox.x + g_last_locked_bbox.width / 2.0f,
+                                    g_last_locked_bbox.y + g_last_locked_bbox.height / 2.0f);
+                float best_dist = 1e9f;
+                bool found_locked = false;
+
+                for (const auto &res : nms_results)
+                {
+                    if (res.score < 0.25f)
+                        continue;
+                    Point2f rc(res.bbox.x + res.bbox.width / 2.0f,
+                               res.bbox.y + res.bbox.height / 2.0f);
+                    float d = std::sqrt((rc.x - last_center.x) * (rc.x - last_center.x) +
+                                        (rc.y - last_center.y) * (rc.y - last_center.y));
+                    if (d < best_dist)
+                    {
+                        best_dist = d;
+                        final_choice = res;
+                        found_locked = true;
+                    }
+                }
+                if (found_locked && final_choice.idx != best_conf_obj.idx)
+                    cout << ">>> [AI 决策] 对齐锁定优先！(锁定框得分:" << final_choice.score
+                         << " 距离:" << best_dist << "px vs 最高分:" << best_conf_obj.score << ")" << endl;
+                else if (!found_locked)
+                    locked = false; // 锁定目标丢失，走兜底逻辑
+            }
+
+            // 【兜底】：未锁定时，选置信度≥0.25的最左侧框
+            if (!locked)
             {
                 std::vector<AnchorData> sorted_by_x = nms_results;
                 std::sort(sorted_by_x.begin(), sorted_by_x.end(), [](const AnchorData &a, const AnchorData &b)
@@ -260,8 +291,8 @@ YoloResult runYoloInference(const Mat &frame, int target_class_id)
             // ====================================================
 
             // 更新记忆锁定框，供下一帧（或下个Demo）使用
-            s_last_bbox = obj.bbox;
-            s_last_class_id = target_class_id;
+            g_last_locked_bbox = obj.bbox;
+            g_last_locked_class_id = target_class_id;
 
             result.objects.push_back(obj);
             cout << "[AI 专属锁定] 类别 ID: " << obj.class_id << " | 置信度: " << obj.confidence << endl;
