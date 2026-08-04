@@ -12,6 +12,26 @@
 
 using namespace std;
 
+// ==========================================================
+// 【新增】：stop 与 restart
+// ==========================================================
+static std::atomic<bool> g_macro_paused{false};
+static std::mutex g_macro_pause_mtx;
+static std::condition_variable g_macro_pause_cv;
+static std::string g_macro_last_step = "初始未启动";
+// 用于在动作链每个环节后检查是否需要挂起的护栏函数
+void checkMacroPausePoint(const std::string& step_desc)
+{
+    g_macro_last_step = step_desc;
+    if (g_macro_paused.load())
+    {
+        std::cout << "\n>>> [宏动作链-挂起] 已安全停留在节点: [" << step_desc << "]，等待 RESTART 指令..." << std::endl;
+        std::unique_lock<std::mutex> lock(g_macro_pause_mtx);
+        g_macro_pause_cv.wait(lock, []() { return !g_macro_paused.load(); });
+        std::cout << "\n>>> [宏动作链-唤醒] 接收到恢复信号，从 [" << step_desc << "] 节点继续执行！" << std::endl;
+    }
+}
+
 void processTextCommand(const std::string &cmd_line)
 {
     if (cmd_line.empty())
@@ -20,6 +40,22 @@ void processTextCommand(const std::string &cmd_line)
     for (auto &c : lower_cmd)
         c = tolower(c);
 
+    if (lower_cmd == "stop")
+    {
+        g_macro_paused = true;
+        std::cout << "\n>>> [宏控制] 收到 STOP 指令！当前正在执行的底层动作完成后将安全挂起..." << std::endl;
+        return;
+    }
+    if (lower_cmd == "restart")
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_macro_pause_mtx);
+            g_macro_paused = false;
+        }
+        g_macro_pause_cv.notify_all();
+        std::cout << "\n>>> [宏控制] 收到 RESTART 指令！通知主调度线程恢复运行..." << std::endl;
+        return;
+    }
     if (lower_cmd == "fix")
     {
         g_trigger_aruco_fix = true;
@@ -85,21 +121,48 @@ void processTextCommand(const std::string &cmd_line)
             std::cout << ">>> 全自动装配宏动作链启动 (主调度流)" << std::endl;
             std::cout << "=============================================\n" << std::endl;
 
-            // ---- 事件驱动等待器 (替换所有 usleep) ----
-            auto wait_demo = [](int timeout_ms = 350000) {
+            // 每次启动全新的 start 时，确保不处于暂停状态
+            g_macro_paused = false;
+
+            // ---- 具备实时挂起能力的事件驱动等待器 ----
+            auto wait_demo = [](int timeout_ms = 350000, const std::string& step_name = "机械臂动作") {
                 g_wf_demo_done = false;
-                while (!g_wf_demo_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
+                while (!g_wf_demo_done && timeout_ms > 0) { 
+                    // 【核心修改】：在等待的每一帧都进行护栏探测，实现瞬间冻结
+                    checkMacroPausePoint("等待 " + step_name + " 完成"); 
+                    usleep(50000); 
+                    timeout_ms -= 50; 
+                }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] DEMO 未在时限内完成！" << std::endl;
             };
-            auto wait_cmd = [](int timeout_ms = 150000) {
+
+            auto wait_cmd = [](int timeout_ms = 150000, const std::string& step_name = "直通指令") {
                 g_wf_cmd_done = false;
-                while (!g_wf_cmd_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
+                while (!g_wf_cmd_done && timeout_ms > 0) { 
+                    checkMacroPausePoint("等待 " + step_name + " 完成"); 
+                    usleep(50000); 
+                    timeout_ms -= 50; 
+                }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 直通指令未在时限内完成！" << std::endl;
             };
-            auto wait_chassis = [](int timeout_ms = 200000) {
+
+            auto wait_chassis = [](int timeout_ms = 200000, const std::string& step_name = "底盘移动") {
                 g_wf_chassis_done = false;
-                while (!g_wf_chassis_done && timeout_ms > 0) { usleep(50000); timeout_ms -= 50; }
+                while (!g_wf_chassis_done && timeout_ms > 0) { 
+                    checkMacroPausePoint("等待 " + step_name + " 到位"); 
+                    usleep(50000); 
+                    timeout_ms -= 50; 
+                }
                 if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 底盘未在时限内到达！" << std::endl;
+            };
+
+            // 【新增】：用于替代剧本中所有 raw usleep() 的可打断延时器
+            auto macro_delay = [](int delay_us, const std::string& step_name = "流程间延时") {
+                while (delay_us > 0) {
+                    checkMacroPausePoint(step_name);
+                    usleep(50000);
+                    delay_us -= 50000;
+                }
             };
 
             auto move_car = [&](float tx, float ty, float tyaw) {
@@ -109,7 +172,9 @@ void processTextCommand(const std::string &cmd_line)
                     write(g_serial_fd, buf, strlen(buf));
                     std::cout << ">>> [动作链] 下发底盘寻路: X:" << tx << " Y:" << ty << " Yaw:" << tyaw << std::endl;
                 }
-                wait_chassis();
+                char desc[64];
+                sprintf(desc, "底盘移动到 (%.1f, %.1f)", tx, ty);
+                wait_chassis(200000, desc);
             };
 
             auto do_vision_demo = [&](int arm_id, int class_id, int action_id, const std::string& cmd) {
@@ -122,69 +187,72 @@ void processTextCommand(const std::string &cmd_line)
                     g_demo_task.action_id = action_id;
                     g_demo_task.raw_cmd = cmd;
                 }
-                wait_demo();
+                wait_demo(350000, "视觉任务 " + cmd);
             };
+            
             auto do_031_sequence = [&]() {
                 std::cout << "\n>>> [动作链] 下发 DO031 (换手)，并等待视觉闭环装配全流程完成..." << std::endl;
                 if (g_serial_fd >= 0) {
                     std::string full_cmd = "DO031\r\n";
                     write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
                 }
-                // 调用 wait_demo 监听 DEMO_DONE 信号 (g_wf_demo_done)
-                wait_demo(); 
+                wait_demo(350000, "DO031 换手流程"); 
             };
-            // 直通下发任意单指令
+            
             auto send_raw = [&](const std::string& cmd) {
                 std::cout << "\n>>> [动作链] 强插直通指令: " << cmd << std::endl;
                 if (g_serial_fd >= 0) {
                     std::string full_cmd = cmd + "\r\n";
                     write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
                 }
-                wait_cmd();
+                wait_cmd(150000, "直通指令 " + cmd);
             };
-
-            // ==========================================================
-            // 【新增核心】：全自动闭环对齐 A/B 状态机循环引擎
-            // ==========================================================
-            // 【新增全局标志】：告诉 VisionEngine 这是一次全新的对齐，记录原点
-            extern bool g_reset_align_memory;
 
             auto auto_align_loop = [](const std::string& align_cmd) {
                 std::cout << "\n>>> [动作链] 开始全自动闭环对齐: " << align_cmd << std::endl;
                 extern bool g_wf_align_done;
                 extern bool g_wf_align_success;
+                extern bool g_reset_align_memory;
                 
-                g_reset_align_memory = true; // 每次发起全新对齐前，重置记忆！
-                
-                int max_retry = 7; // 设置最大微调次数(7次)，防止因意外一直原地死循环
+                g_reset_align_memory = true;
+                int max_retry = 7; 
 
                 while(max_retry-- > 0) {
+                    // 【核心修改】：在每次发起微调之前，允许瞬间挂起
+                    checkMacroPausePoint("准备下发对齐循环: " + align_cmd);
+
                     g_wf_align_done = false;
                     g_wf_align_success = false;
                     
-                    // 1. 发起一次 PnP 视觉解算与对齐
                     {
                         std::lock_guard<std::mutex> lock(g_task_mtx);
                         g_demo_task.pending = true;
                         g_demo_task.raw_cmd = align_cmd; 
                     }
                     
-                    // 2. 轮询等待底盘的 A/B 反馈 (加了 15 秒强制超时保护)
                     int timeout = 15000; 
                     while(!g_wf_align_done && !g_wf_align_success && timeout > 0) {
-                        usleep(50000); // 50ms 检查一次
+                        // 【核心修改】：在等待底盘调整的过程中，允许瞬间挂起
+                        checkMacroPausePoint("等待对齐底层反馈: " + align_cmd);
+                        usleep(50000);
                         timeout -= 50;
                     }
                     
-                    // 3. 处理反馈
                     if (g_wf_align_success) {
                         std::cout << ">>> [动作链] 完美达标 (收到 B 信号)！" << align_cmd << " 调整结束。" << std::endl;
-                        break; // 准了，跳出循环进入下一步抓取！
+                        break; 
                     }
                     
                     if (g_wf_align_done) {
                         std::cout << ">>> [动作链] 动作完成 (收到 A 信号)，等待 1.5 秒画面稳定后重试..." << std::endl;
-                        usleep(2500000); // 等待车身晃动结束、镜头对焦完毕
+                        
+                        // 【核心修改】：把不可打断的 usleep(2500000) 换成支持暂停的轮询
+                        int wait_stable = 2500000;
+                        while(wait_stable > 0) {
+                            checkMacroPausePoint("对齐后画面冷却缓冲: " + align_cmd);
+                            usleep(50000);
+                            wait_stable -= 50000;
+                        }
                     } else if (timeout <= 0) {
                         std::cout << ">>> [动作链] 严重警告: 等待底层动作超时，强行跳出对齐！" << std::endl;
                         break;
@@ -193,7 +261,7 @@ void processTextCommand(const std::string &cmd_line)
             };
 
             //=======================================================
-            // 动作链正式开始编排：你可以像写剧本一样写在这里
+            // 动作链正式开始编排：像写剧本一样写在这里
             //=======================================================
             
             // 示例剧本：
@@ -234,7 +302,7 @@ void processTextCommand(const std::string &cmd_line)
             auto_align_loop("align92");
             do_vision_demo(0, 0, 1, "DEMO001");
             //抓角柱1
-            move_car(-25, 0, -90);
+            move_car(-25, 10, -90);
             auto_align_loop("align04");
             do_vision_demo(1, 1, 1, "DEMO111");
             //抓墙2

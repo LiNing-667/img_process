@@ -15,7 +15,7 @@ namespace SystemConfig {
     const int PCA_ADDR_ARM1 = 0x41;         
 }
 
-const float Arm0_open = 60.0f;
-const float Arm0_close = 150.0f;
+const float Arm0_open = 140.0f;
+const float Arm0_close = 30.0f;
 const float Arm1_open = 140.0f;
 const float Arm1_close = 30.0f;

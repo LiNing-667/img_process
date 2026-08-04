@@ -124,146 +124,131 @@ bool findOrderedCorners(const Mat &roi_frame, int class_id, std::vector<Point2f>
     std::vector<Point2f> corners;
 
     // ==========================================================
-    // 【新增】：基于霍夫直线交点的高鲁棒性四边形提取 (无视外挂杂斑与突起)
+    // 【终极重构】：极值初筛 + 混合几何雕刻算法 (穿透防压扁版)
     // ==========================================================
     if (class_id == 9)
     {
-        Mat edge_mask;
-        Canny(mask, edge_mask, 50, 150);
-        vector<Vec4i> lines;
-        HoughLinesP(edge_mask, lines, 1, CV_PI / 180, 20, 20, 10);
+        // 1. 先用点乘极值法获取四个外围极端点
+        RotatedRect r_rect = minAreaRect(best_contour);
+        Point2f r_pts[4];
+        r_rect.points(r_pts);
+        Point2f r_center = r_rect.center;
 
-        Vec4i l_t(0,0,0,0), l_b(0,0,0,0), l_l(0,0,0,0), l_r(0,0,0,0);
-        float len_t = 0, len_b = 0, len_l = 0, len_r = 0;
-        int cx = mask.cols / 2;
-        int cy = mask.rows / 2;
-
-        // 1. 在四个象限中寻找 上、左、右 最长的边缘直线 (废弃原有的底边直接查找)
-        for (const auto& l : lines) {
-            float dx = l[2] - l[0], dy = l[3] - l[1];
-            float len = std::sqrt(dx*dx + dy*dy);
-            
-            // 计算线段中点
-            int mx = std::round((l[0] + l[2]) / 2.0f);
-            int my = std::round((l[1] + l[3]) / 2.0f);
-
-            // 防止中点越界
-            mx = std::max(0, std::min(mask.cols - 1, mx));
-            my = std::max(0, std::min(mask.rows - 1, my));
-
-            if (std::abs(dx) > std::abs(dy)) { // 横向线
-                if (my < cy && len > len_t) { 
-                    len_t = len; l_t = l; 
-                }
-                // 注意：旧的底边 l_b 的霍夫查找已经被废弃，下面会用新算法计算
-            } else { // 纵向线
-                if (mx < cx && len > len_l) { len_l = len; l_l = l; }
-                else if (mx >= cx && len > len_r) { len_r = len; l_r = l; }
-            }
-        }
-
-        // ==========================================================
-        // 【新算法】：利用已知的上边缘向下平移扫描，寻找真实的底边
-        // ==========================================================
-        if (len_t > 0) {
-            // 计算上边缘的斜率 k 和截距 b
-            float k = (float)(l_t[3] - l_t[1]) / (l_t[2] - l_t[0] + 1e-5f);
-            float b_line = l_t[1] - k * l_t[0];
-            
-            int x_min = std::min(l_t[0], l_t[2]);
-            int x_max = std::max(l_t[0], l_t[2]);
-            
-            // 左右缩进 15%，只扫描中间 70% 的主体区域，完美避开左右圆角和侧边干扰
-            int margin = (x_max - x_min) * 0.15f; 
-            int scan_x_start = x_min + margin;
-            int scan_x_end = x_max - margin;
-            
-            if (scan_x_end > scan_x_start) {
-                int best_d = -1;
-                
-                // 让这条线从上边缘开始，1像素1像素地往下平移 (d 为下移量)
-                for (int d = 5; d < mask.rows; d++) {
-                    int white_count = 0;
-                    int total_count = 0;
-                    
-                    // 遍历当前扫描线上的所有点
-                    for (int x = scan_x_start; x <= scan_x_end; x++) {
-                        int y = std::round(k * x + b_line + d);
-                        if (y >= 0 && y < mask.rows) {
-                            if (mask.at<uchar>(y, x) > 128) {
-                                white_count++;
-                            }
-                            total_count++;
-                        }
-                    }
-                    
-                    if (total_count == 0) break;
-                    
-                    float white_ratio = (float)white_count / total_count;
-                    
-                    // 【核心判断】：当白点比例跌破 90%，意味着这条线碰到了底部的缺口或黑色的背景
-                    // 这就是你描述的“从上下都白，变成了下面有黑”的临界点！
-                    if (white_ratio < 0.90f) {
-                        best_d = d - 2; // 稍微往回退 2 个像素，确保线完全落在主体白边上
-                        break;
-                    }
-                }
-                
-                // 将下移量应用，直接构造出一条与上边绝对平行的底边！
-                if (best_d != -1) {
-                    l_b[0] = l_t[0]; l_b[1] = l_t[1] + best_d;
-                    l_b[2] = l_t[2]; l_b[3] = l_t[3] + best_d;
-                    len_b = len_t; // 赋予一个伪长度使后续的交点逻辑生效
-                    std::cout << ">>> [底边扫描] 成功利用上边缘平移法锁定真实底边！下移量: " << best_d << " 像素" << std::endl;
-                }
-            }
-        }
-
-        // 2. 依然利用克莱姆法则，求四条线的两两交点 (这套数学逻辑无缝衔接)
-        if (len_t > 0 && len_b > 0 && len_l > 0 && len_r > 0) {
-            auto intersect = [](Vec4i l1, Vec4i l2) -> Point2f {
-                float A1 = l1[3] - l1[1], B1 = l1[0] - l1[2], C1 = A1 * l1[0] + B1 * l1[1];
-                float A2 = l2[3] - l2[1], B2 = l2[0] - l2[2], C2 = A2 * l2[0] + B2 * l2[1];
-                float det = A1 * B2 - A2 * B1;
-                if (std::abs(det) < 1e-5) return Point2f(-1, -1); // 平行无交点
-                return Point2f((C1 * B2 - C2 * B1) / det, (A1 * C2 - A2 * C1) / det);
-            };
-
-            Point2f tl = intersect(l_t, l_l); // 上与左交于左上
-            Point2f tr = intersect(l_t, l_r); // 上与右交于右上
-            Point2f bl = intersect(l_b, l_l); // 下与左交于左下
-            Point2f br = intersect(l_b, l_r); // 下与右交于右下
-
-            // 校验数学交点是否有效
-            if (tl.x != -1 && tr.x != -1 && bl.x != -1 && br.x != -1) {
-                corners = {tl, tr, br, bl};
-                std::cout << ">>> [霍夫四边形] ID=9 | 成功利用 4 条边界线延长相交获取完美四角！" << std::endl;
-            }
-        }
-    }
-
-    // 如果交点提取失败（比如某条边破损太严重没提取到长线），退回原始的点乘极值法兜底
-    if (corners.empty())
-    {
-        for (int i = 0; i < 4; i++)
-        {
-            Point2f v_dir = rect_pts[i] - center;
+        std::vector<Point2f> raw_corners;
+        for (int i = 0; i < 4; i++) {
+            Point2f v_dir = r_pts[i] - r_center;
             double max_dot = -1e9;
             Point2f best_pt;
-            for (const auto &cp : best_contour)
-            {
+            for (const auto &cp : best_contour) {
                 Point2f pt(cp.x, cp.y);
-                Point2f v_pt = pt - center;
+                Point2f v_pt = pt - r_center;
                 double dot_prod = v_pt.x * v_dir.x + v_pt.y * v_dir.y;
-                if (dot_prod > max_dot)
-                {
+                if (dot_prod > max_dot) {
                     max_dot = dot_prod;
                     best_pt = pt;
                 }
             }
-            corners.push_back(best_pt);
+            raw_corners.push_back(best_pt);
         }
+
+        // 排序得到初筛的 左上、右上、左下、右下
+        std::vector<Point2f> top_pts, bot_pts;
+        std::sort(raw_corners.begin(), raw_corners.end(), [](Point2f a, Point2f b) { return a.y < b.y; });
+        top_pts.push_back(raw_corners[0]); top_pts.push_back(raw_corners[1]);
+        bot_pts.push_back(raw_corners[2]); bot_pts.push_back(raw_corners[3]);
+        if (top_pts[0].x > top_pts[1].x) std::swap(top_pts[0], top_pts[1]);
+        if (bot_pts[0].x > bot_pts[1].x) std::swap(bot_pts[0], bot_pts[1]);
+
+        Point2f tl = top_pts[0], tr = top_pts[1];
+        Point2f bl = bot_pts[0], br = bot_pts[1];
+
+        // 2. 上侧线：绝对信任 tl 和 tr
+        float k_top = (tr.y - tl.y) / (tr.x - tl.x + 1e-5f);
+        float b_top = tl.y - k_top * tl.x;
+
+        // 3. 下侧线：穿透式扫描法！
+        int best_d = -1;
+        int margin = (tr.x - tl.x) * 0.15f; 
+        int scan_x_start = std::max(0, (int)tl.x + margin);
+        int scan_x_end = std::min(mask.cols - 1, (int)tr.x - margin);
+
+        if (scan_x_end > scan_x_start) {
+            bool has_entered_white = false; // 穿透状态标志位
+            for (int d = 5; d < mask.rows; d++) {
+                int white_count = 0, total_count = 0;
+                for (int x = scan_x_start; x <= scan_x_end; x++) {
+                    int y = std::round(k_top * x + b_top + d);
+                    if (y >= 0 && y < mask.rows) {
+                        if (mask.at<uchar>(y, x) > 128) white_count++;
+                        total_count++;
+                    }
+                }
+                
+                // 越界保护，如果底边直接插到底
+                if (total_count == 0) {
+                    if (has_entered_white) best_d = std::max(0, d - 2); 
+                    break;
+                }
+                
+                float white_ratio = (float)white_count / total_count;
+                if (white_ratio > 0.90f) {
+                    // 确认扫描线已经完全进入了纯白的主体内部
+                    has_entered_white = true; 
+                } else if (has_entered_white && white_ratio < 0.85f) {
+                    // 只有在进入主体后，白点率再次跌破 85%，才说明切出了下边界！
+                    best_d = std::max(0, d - 2); 
+                    break;
+                }
+            }
+        }
+        if (best_d == -1) best_d = std::max(10, (int)(bl.y - tl.y)); // 极度异常兜底
+
+        // 定义检测某条线段是否主体纯白的闭包函数 
+        auto isLineWhite = [&](Point2f p1, Point2f p2) -> bool {
+            int steps = std::max(10, (int)std::max(std::abs(p1.x - p2.x), std::abs(p1.y - p2.y)));
+            int white_hits = 0, valid_pts = 0;
+            // 【核心防御】：掐头去尾，跳过线段两端 15% 的圆角和毛刺，只测最直的中段！
+            int start_i = steps * 0.15f;
+            int end_i = steps * 0.85f;
+            if (start_i >= end_i) return false;
+
+            for (int i = start_i; i <= end_i; i++) {
+                float r = (float)i / steps;
+                int px = std::round(p1.x + r * (p2.x - p1.x));
+                int py = std::round(p1.y + r * (p2.y - p1.y));
+                if (px >= 0 && px < mask.cols && py >= 0 && py < mask.rows) {
+                    if (mask.at<uchar>(py, px) > 128) white_hits++;
+                    valid_pts++;
+                }
+            }
+            if (valid_pts == 0) return false;
+            return (float)white_hits / valid_pts >= 0.85f; 
+        };
+
+        // 4. 左侧线修正：以 tl 为圆心向内逆时针旋转
+        Point2f new_bl(bl.x, k_top * bl.x + b_top + best_d); 
+        for (int i = 0; i < 200; i++) { 
+            if (isLineWhite(tl, new_bl)) break;
+            new_bl.x += 1.0f; // 向右移
+            new_bl.y = k_top * new_bl.x + b_top + best_d; // 强制落在底线上
+        }
+
+        // 5. 右侧线修正：整体向内平移
+        Point2f new_tr = tr;
+        Point2f new_br(br.x, k_top * br.x + b_top + best_d); 
+        for (int i = 0; i < 200; i++) { 
+            if (isLineWhite(new_tr, new_br)) break;
+            new_tr.x -= 1.0f; // 向左移
+            new_tr.y = k_top * new_tr.x + b_top;          
+            new_br.x -= 1.0f;
+            new_br.y = k_top * new_br.x + b_top + best_d; 
+        }
+
+        // 组装最终完全切合纯白实体的四个点
+        corners = {tl, new_tr, new_br, new_bl};
+        std::cout << ">>> [无敌雕刻] ID=9 | 成功执行穿透顶线下移、防圆角侧边收缩修正！" << std::endl;
     }
+
 
     std::vector<Point2f> top, bot;
     std::sort(corners.begin(), corners.end(), [](Point2f a, Point2f b)
