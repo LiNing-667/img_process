@@ -33,7 +33,9 @@ extern float g_arm_x_offset_cm[2]; // 拆分为数组：0对应ARM0(右臂)，1�
 extern float g_calibrated_pan;
 extern float g_calibrated_tilt;
 extern std::atomic<bool> g_hsv_find_running;
-
+// --- 图传控制 (CMD_VIDEO_CTRL) ---
+extern std::atomic<bool> g_video_stream_on; // 二进制图传总开关 (默认开)
+extern std::atomic<int> g_video_quality;    // JPEG 编码质量 1-100
 // --- DEMO091 闭环验证缓存 ---
 extern cv::Rect g_cache_091_bbox;
 extern float g_cache_091_px;

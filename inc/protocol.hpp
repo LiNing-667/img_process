@@ -47,9 +47,10 @@ namespace protocol
     constexpr uint8_t CMD_EMERGENCY = 0x06;
     constexpr uint8_t CMD_TEXT = 0x10;
 
-    // 应答
+    // 应答 / 上报 (下位机 → 上位机)
     constexpr uint8_t RESP_OK = 0x80;
     constexpr uint8_t RESP_ERROR = 0x81;
+    constexpr uint8_t CMD_DOWNLINK_MSG = 0x82; // 下位机自由文本/状态消息
 
     using Frame = std::vector<uint8_t>;
 
@@ -160,6 +161,12 @@ namespace protocol
     inline Frame build_resp_error(const char *msg = "ERROR")
     {
         return build(RESP_ERROR, (const uint8_t *)msg, (uint16_t)std::strlen(msg));
+    }
+
+    /// 下位机主动上报文本/状态消息 (payload: UTF-8 字符串)
+    inline Frame build_downlink_msg(const char *msg)
+    {
+        return build(CMD_DOWNLINK_MSG, (const uint8_t *)msg, (uint16_t)std::strlen(msg));
     }
 
     // ==========================================
