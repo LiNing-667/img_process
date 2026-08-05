@@ -2283,11 +2283,13 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
     }
 
     // ==========================================================
-    // 【修改 1】：截取最右侧 1/3 区域，并在宽度上额外向右侧外扩 80 个像素
+    // 【修改 1】：截取最右侧 1/3 区域，左侧内缩 50 像素，右侧外扩 80 像素
     // ==========================================================
     Rect right_roi = g_cache_091_bbox;
-    right_roi.x = right_roi.x + right_roi.width * 2 / 3;
-    right_roi.width = (right_roi.width / 3) + 80;
+    // 起始 X 坐标：原本的最右 1/3 起点，向右缩进 50 像素
+    right_roi.x = right_roi.x + (right_roi.width * 2 / 3) + 50; 
+    // 宽度：原本的 1/3 宽度，减去左侧内缩的 50 像素，再加上右侧外扩的 80 像素 (即净增加 30 像素)
+    right_roi.width = (right_roi.width / 3) - 50 + 80;
 
     // 依然保留安全裁剪，防止这多出来的 80 像素超出了图像真实边界导致程序崩溃
     right_roi &= Rect(0, 0, raw_frame.cols, raw_frame.rows);
@@ -2944,13 +2946,13 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
         float cmd_dy = 0.0f;
         bool need_macro_adj = false;
 
-        // 1. 距离判断 (前后)：看上边界，如果落在画面顶端 30% 往下，说明离得太近
-        float top_threshold = raw_frame.rows * 0.35f;
+        // 1. 距离判断 (前后)：看上边界，如果落在画面顶端 20% 往下，说明离得太近
+        float top_threshold = raw_frame.rows * 0.20f;
         if (top_y > top_threshold)
         {
             cmd_dx = 3.0f; // 下发正数代表后移 3 厘米
             need_macro_adj = true;
-            cout << ">>> [宏观对齐] align02 蓝色顶端低于画面 30%，下发后退！" << endl;
+            cout << ">>> [宏观对齐] align02 蓝色顶端低于画面 20%，下发后退！" << endl;
         }
 
         // 2. 左右判断：基于中心点，左死区 10，右死区 300
