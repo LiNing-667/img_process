@@ -262,7 +262,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
     {
         Mat hsv, mask;
         cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
-        inRange(hsv, Scalar(95, 80, 40), Scalar(140, 255, 255), mask);
+        inRange(hsv, Scalar(90, 160, 160), Scalar(112, 255, 255), mask);
         Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
         morphologyEx(mask, mask, MORPH_OPEN, kernel);
         morphologyEx(mask, mask, MORPH_CLOSE, kernel);
@@ -323,7 +323,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
             bool need_macro_adj = false;
 
             // 1. 距离判断 (前后)
-            float bottom_threshold_far = raw_frame.rows * 0.50f;
+            float bottom_threshold_far = raw_frame.rows * 0.60f;
             //float bottom_threshold_close = raw_frame.rows * 1.0f;
 
             if (bottom_y < bottom_threshold_far)
@@ -392,7 +392,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
     {
         Mat hsv, mask;
         cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
-        inRange(hsv, Scalar(95, 80, 40), Scalar(140, 255, 255), mask);
+        inRange(hsv, Scalar(90, 160, 160), Scalar(112, 255, 255), mask);// 蓝色阈值
         Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
         morphologyEx(mask, mask, MORPH_OPEN, kernel);
         morphologyEx(mask, mask, MORPH_CLOSE, kernel);
@@ -1662,7 +1662,7 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
         cout << "\n>>> [对齐恢复] 图像就绪，开始扫描蓝色区域分布..." << endl;
         Mat hsv, mask;
         cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
-        inRange(hsv, Scalar(95, 80, 40), Scalar(140, 255, 255), mask);
+        inRange(hsv, Scalar(90, 160, 160), Scalar(112, 255, 255), mask);
         Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
         morphologyEx(mask, mask, MORPH_OPEN, kernel);
         morphologyEx(mask, mask, MORPH_CLOSE, kernel);
@@ -2117,7 +2117,7 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
     cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
 
     // 提取蓝色 HSV 范围
-    inRange(hsv, Scalar(95, 80, 40), Scalar(140, 255, 255), mask);
+    inRange(hsv, Scalar(90, 160, 160), Scalar(112, 255, 255), mask);
     Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
     morphologyEx(mask, mask, MORPH_OPEN, kernel);
     morphologyEx(mask, mask, MORPH_CLOSE, kernel);
@@ -2318,9 +2318,28 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
     // 融合两种边缘：只要颜色突变或亮度突变，统统作为有效边缘！
     bitwise_or(edges_s, edges_v, edges);
 
+    // ==========================================================
+    // 【全新优化】：垂直形态学提纯，专治“交错纵横”的背景噪点
+    // ==========================================================
+    // 1. 垂直开运算 (MORPH_OPEN)：用一个 1宽5高 的垂直短线段去扫描扫描，
+    // 把无法形成 5 像素以上连续垂直线段的横向、斜向细碎噪点统统“擦除”！
+    Mat kernel_open = getStructuringElement(MORPH_RECT, Size(1, 5));
+    morphologyEx(edges, edges, MORPH_OPEN, kernel_open);
+
+    // 2. 垂直闭运算 (MORPH_CLOSE)：用一个 1宽15高 的垂直长条去扫描，
+    // 把深色主边缘上因为噪点撕扯而产生的上下断裂缝隙“强行缝合”！
+    Mat kernel_close = getStructuringElement(MORPH_RECT, Size(1, 15));
+    morphologyEx(edges, edges, MORPH_CLOSE, kernel_close);
+
     // 3. 霍夫直线变换
     vector<Vec4i> lines;
-    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, right_roi.height * 0.6, 10);
+    // 【注意修改最后一项】：将 maxLineGap 从 10 放大到 30！
+    // 允许线段中间有 30 像素的断层，确保深色边缘能被完整连成达到 height * 0.6 的长线。
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, right_roi.height * 0.6, 30);
+
+    // 3. 霍夫直线变换
+    //vector<Vec4i> lines;
+    //HoughLinesP(edges, lines, 1, CV_PI / 180, 20, right_roi.height * 0.6, 10);
 
     // 4. 筛选并聚类竖直长线 (防止同一条粗边被识别成好几条线)
     std::vector<int> valid_x_centers;
@@ -2428,8 +2447,18 @@ void VisionEngine::handleCheck001(Mat &raw_frame)
     Canny(hsv_channels[2], edges_v, 12, 33);
     bitwise_or(edges_s, edges_v, edges);
 
+    // 1. 垂直开运算 (MORPH_OPEN)：用一个 1宽5高 的垂直短线段去扫描扫描，
+    // 把无法形成 5 像素以上连续垂直线段的横向、斜向细碎噪点统统“擦除”！
+    Mat kernel_open = getStructuringElement(MORPH_RECT, Size(1, 5));
+    morphologyEx(edges, edges, MORPH_OPEN, kernel_open);
+
+    // 2. 垂直闭运算 (MORPH_CLOSE)：用一个 1宽15高 的垂直长条去扫描，
+    // 把深色主边缘上因为噪点撕扯而产生的上下断裂缝隙“强行缝合”！
+    Mat kernel_close = getStructuringElement(MORPH_RECT, Size(1, 15));
+    morphologyEx(edges, edges, MORPH_CLOSE, kernel_close);
+
     vector<Vec4i> lines;
-    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 30);
     std::vector<int> valid_x_centers;
 
     // ==========================================================
@@ -2531,8 +2560,18 @@ void VisionEngine::handleCheck002(Mat &raw_frame)
     Canny(hsv_channels[2], edges_v, 10, 31);
     bitwise_or(edges_s, edges_v, edges);
 
+    // 1. 垂直开运算 (MORPH_OPEN)：用一个 1宽5高 的垂直短线段去扫描扫描，
+    // 把无法形成 5 像素以上连续垂直线段的横向、斜向细碎噪点统统“擦除”！
+    Mat kernel_open = getStructuringElement(MORPH_RECT, Size(1, 5));
+    morphologyEx(edges, edges, MORPH_OPEN, kernel_open);
+
+    // 2. 垂直闭运算 (MORPH_CLOSE)：用一个 1宽15高 的垂直长条去扫描，
+    // 把深色主边缘上因为噪点撕扯而产生的上下断裂缝隙“强行缝合”！
+    Mat kernel_close = getStructuringElement(MORPH_RECT, Size(1, 15));
+    morphologyEx(edges, edges, MORPH_CLOSE, kernel_close);
+
     vector<Vec4i> lines;
-    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 30);
     std::vector<int> valid_x_centers;
 
     // ==========================================================
@@ -2633,8 +2672,18 @@ void VisionEngine::handleCheck003(Mat &raw_frame)
     Canny(hsv_channels[2], edges_v, 8, 27);
     bitwise_or(edges_s, edges_v, edges);
 
+    // 1. 垂直开运算 (MORPH_OPEN)：用一个 1宽5高 的垂直短线段去扫描扫描，
+    // 把无法形成 5 像素以上连续垂直线段的横向、斜向细碎噪点统统“擦除”！
+    Mat kernel_open = getStructuringElement(MORPH_RECT, Size(1, 5));
+    morphologyEx(edges, edges, MORPH_OPEN, kernel_open);
+
+    // 2. 垂直闭运算 (MORPH_CLOSE)：用一个 1宽15高 的垂直长条去扫描，
+    // 把深色主边缘上因为噪点撕扯而产生的上下断裂缝隙“强行缝合”！
+    Mat kernel_close = getStructuringElement(MORPH_RECT, Size(1, 15));
+    morphologyEx(edges, edges, MORPH_CLOSE, kernel_close);
+
     vector<Vec4i> lines;
-    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 10);
+    HoughLinesP(edges, lines, 1, CV_PI / 180, 20, roi_rect.height * 0.6, 30);
     std::vector<int> valid_x_centers;
 
     for (size_t i = 0; i < lines.size(); i++)
@@ -2730,7 +2779,7 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
     // 2. 纯 HSV 蓝色提取框选
     Mat hsv, mask;
     cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
-    inRange(hsv, Scalar(95, 80, 40), Scalar(140, 255, 255), mask);
+    inRange(hsv, Scalar(90, 160, 160), Scalar(112, 255, 255), mask);
     Mat kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
     morphologyEx(mask, mask, MORPH_OPEN, kernel);
     morphologyEx(mask, mask, MORPH_CLOSE, kernel);

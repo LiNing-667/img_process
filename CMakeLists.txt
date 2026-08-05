@@ -63,3 +63,24 @@ target_link_libraries(PilotApp PRIVATE
     Threads::Threads
     m
 )
+
+# ==========================================
+# 【EvalApp 编译规则】(考场能力测评工程)
+# 自动搜集 eval_app/src 目录下的所有 C 和 C++ 源文件
+# ==========================================
+file(GLOB EVAL_SRCS "eval_app/src/*.cpp" "eval_app/src/*.c")
+
+add_executable(EvalApp ${EVAL_SRCS})
+
+# 包含测评工程的头文件目录
+target_include_directories(EvalApp PRIVATE 
+    "${CMAKE_SOURCE_DIR}/eval_app/inc"
+    "${OPENCV_INSTALL_DIR}/include/opencv4"
+)
+
+# 链接多线程库与 Linux 数学库
+target_link_libraries(EvalApp PRIVATE
+    Threads::Threads
+    OpenMP::OpenMP_CXX
+    m
+)

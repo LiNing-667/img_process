@@ -1,0 +1,21 @@
+[33m245d27a[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m 正式版1.2
+[33m4ab26f9[m 正式版1.1
+[33mf014b23[m 正式版1.0
+[33ma107398[m 0802测试版
+[33mb83e624[m 0801测试版
+[33m137ad41[m 加了路径规划和视觉调车
+[33m7f57514[m 边缘检测视觉闭环(全)
+[33m8e5d44c[m 边缘检测视觉闭环
+[33m3d1f109[m 模块化重构了pilot.cpp
+[33mce36820[m 模块化重构了pilot.cpp
+[33m8e164ad[m 模块化重构了monitor.cpp
+[33m3155262[m 模块化重构monitor
+[33m5b3dbd5[m 要改边缘检测
+[33m4e9ea2c[m 123
+[33m31676f2[m 7月初正式版
+[33m5449527[m 0708
+[33mdfd4eec[m 修复很多端口
+[33mafda768[m 修复端口
+[33md21451f[m 更新了protocol.hpp
+[33ma7a3e2e[m 更新 .gitignore，忽略 build 文件夹
+[33m88fd456[m Initial commit
