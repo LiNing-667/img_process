@@ -209,7 +209,7 @@ namespace DemoManager
                         float f_zx = -0.1f, f_zy = 0.0f, f_zz = -1.0f;
                         // 实际要去的三维坐标点
                         float arm_x = px - 2;
-                        float arm_y = py - 11.0f;
+                        float arm_y = py - 11.5f;
                         // 让手腕顺着从基座到目标点的向量方向延伸
                         float length = std::sqrt(arm_x * arm_x + arm_y * arm_y);
                         float f_xx = arm_x / length;
@@ -251,7 +251,6 @@ namespace DemoManager
                         usleep(500000);
                         g_arm.setServoAngle(1, 15, Arm1_close);
                         usleep(1000000);
-                        g_arm.moveSmooth(1, px , py - 4.2f, 2.5, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         g_arm.moveSmooth(1, -9, -7.5 , 8 , -0.1 , 0, -1, -1, 0, 0); //停在一旁
                         sendToMonitor("DEMO_DONE\r\n");
                     })
@@ -450,7 +449,7 @@ namespace DemoManager
             float px_arm1 = px + py_arm1_x;  // X 轴标定误差补偿
             float py_arm1 = py + py_arm1_y;  // Y 轴平移厘米，对齐物理空间
 
-            g_arm.moveSmooth(0, px -1.5f, py + 9.0f , pz_arm0_down , f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
+            g_arm.moveSmooth(0, px -1.5f, py + 9.0f , pz_arm0_down + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
 
             g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);

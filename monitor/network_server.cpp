@@ -316,6 +316,7 @@ void pc_send_downlink(const std::string &text)
             break;
         sent += (size_t)n;
     }
+<<<<<<< HEAD
 }
 
 void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
@@ -339,4 +340,6 @@ void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
             break;
         sent += (size_t)n;
     }
+=======
+>>>>>>> 48054eab202116b029b4f4fe0fbe76857f6c6632
 }
