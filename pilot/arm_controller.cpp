@@ -2,7 +2,9 @@
 #include "hw_i2c.h"
 #include "pilot_config.h"
 #include "ik_solver.h"
+#include "pilot_global.h"
 #include <iostream>
+#include <cstdio>
 #include <cmath>
 #include <unistd.h>
 #include <thread>
@@ -83,6 +85,15 @@ void RoboticArmController::moveSmooth(int arm_id, float t_px, float t_py, float 
     ArmState &curr = states_[arm_id];
     std::vector<float> tgt(target_angles, target_angles + 6);
 
+    // 上报关节角给 monitor → 上位机（驱动上位机 3D 预览）
+    auto report_joints = [&]() {
+        char rep[96];
+        snprintf(rep, sizeof(rep), "JOINTS %d %.2f %.2f %.2f %.2f %.2f %.2f\r\n",
+                 arm_id, curr.current_angles[0], curr.current_angles[1], curr.current_angles[2],
+                 curr.current_angles[3], curr.current_angles[4], curr.current_angles[5]);
+        sendToMonitor(rep);
+    };
+
     if (!curr.initialized) {
         setJointsDirect(arm_id, tgt);
         for (int i=0; i<6; i++) curr.current_angles[i] = tgt[i];
@@ -90,6 +101,7 @@ void RoboticArmController::moveSmooth(int arm_id, float t_px, float t_py, float 
         // 初始化时记录当前物理坐标
         curr.last_px = t_px; curr.last_py = t_py; curr.last_pz = t_pz;
         curr.initialized = true; 
+        report_joints();
         return;
     }
 
@@ -135,6 +147,7 @@ void RoboticArmController::moveSmooth(int arm_id, float t_px, float t_py, float 
         setJointsDirect(arm_id, current_step_angles); 
         usleep(20000); // 20ms 的物理控制帧率
     } 
+    report_joints();
 }
 
 void RoboticArmController::moveRawChannelsSmooth(int arm_id, const std::vector<float> &target_raw_angles, float time_sec) {

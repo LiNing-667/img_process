@@ -146,6 +146,20 @@ namespace protocol
         }
         return build(CMD_ARM_JOINTS, p);
     }
+    // 双臂格式: arm_id(1B) + num(1B) + N×float
+    inline Frame build_arm_joints_arm(uint8_t arm_id, const float *angles, uint8_t num)
+    {
+        std::vector<uint8_t> p(2 + num * 4);
+        p[0] = arm_id;
+        p[1] = num;
+        for (uint8_t i = 0; i < num; ++i)
+        {
+            uint32_t raw;
+            std::memcpy(&raw, angles + i, 4);
+            write_be32(p.data() + 2 + i * 4, raw);
+        }
+        return build(CMD_ARM_JOINTS, p);
+    }
     inline Frame build_exec_program(uint8_t prog_id)
     {
         return build(CMD_EXEC_PROGRAM, &prog_id, 1);
@@ -230,6 +244,17 @@ namespace protocol
         if (idx < 0 || (size_t)(1 + idx * 4 + 4) > f.plen)
             return 0;
         uint32_t raw = read_be32(f.payload + 1 + idx * 4);
+        float v;
+        std::memcpy(&v, &raw, 4);
+        return v;
+    }
+    // 双臂格式解析: payload = arm_id(1B) + num(1B) + N×float
+    inline uint8_t parse_arm_armid(const ParsedFrame &f) { return f.plen > 0 ? f.payload[0] : 0; }
+    inline float parse_arm_joint_arm(const ParsedFrame &f, int idx)
+    {
+        if (idx < 0 || (size_t)(2 + idx * 4 + 4) > f.plen)
+            return 0;
+        uint32_t raw = read_be32(f.payload + 2 + idx * 4);
         float v;
         std::memcpy(&v, &raw, 4);
         return v;

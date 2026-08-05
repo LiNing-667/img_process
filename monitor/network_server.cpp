@@ -160,8 +160,29 @@ public:
                 }
                 case protocol::CMD_ARM_JOINTS:
                 {
-                    uint8_t num = protocol::parse_arm_num(f);
-                    monitor_log << "[PC指令] 收到 " << (int)num << " 个关节角度下发" << std::endl;
+                    uint8_t arm_id = protocol::parse_arm_armid(f);
+                    uint8_t num = (f.plen >= 2) ? f.payload[1] : 0;
+                    std::vector<float> angles;
+                    for (uint8_t i = 0; i < num && i < 6; ++i)
+                        angles.push_back(protocol::parse_arm_joint_arm(f, i));
+                    if (angles.size() >= 6)
+                    {
+                        monitor_log << "[PC指令] 收到 ARM" << (int)arm_id << " 关节角度: "
+                                    << angles[0] << " " << angles[1] << " " << angles[2] << " "
+                                    << angles[3] << " " << angles[4] << " " << angles[5] << std::endl;
+                        // 转发给 Pilot 直接关节角控制（平滑移动）
+                        if (g_serial_fd >= 0)
+                        {
+                            char buf[128];
+                            snprintf(buf, sizeof(buf), "JNT %d %.2f %.2f %.2f %.2f %.2f %.2f\r\n",
+                                     arm_id, angles[0], angles[1], angles[2], angles[3], angles[4], angles[5]);
+                            write(g_serial_fd, buf, strlen(buf));
+                        }
+                    }
+                    else
+                    {
+                        monitor_log << "[PC指令] 收到 ARM" << (int)arm_id << " 关节角度 " << (int)num << " 个 (不足6，忽略)" << std::endl;
+                    }
                     auto resp = protocol::build_resp_ok();
                     send(sock, resp.data(), resp.size(), MSG_NOSIGNAL);
                     break;
@@ -286,6 +307,29 @@ void pc_send_downlink(const std::string &text)
     if (sock < 0)
         return;
     auto frame = protocol::build_downlink_msg(text.c_str());
+    std::lock_guard<std::mutex> lock(g_downlink_mtx);
+    size_t sent = 0;
+    while (sent < frame.size())
+    {
+        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
+        if (n <= 0)
+            break;
+        sent += (size_t)n;
+    }
+}
+
+void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
+{
+    if (!pServerImpl)
+        return;
+    int sock = pServerImpl->cmd_sock.load();
+    if (sock < 0)
+        return;
+    // 补齐 6 轴
+    std::vector<float> a(6, 0.0f);
+    for (size_t i = 0; i < angles.size() && i < 6; ++i)
+        a[i] = angles[i];
+    auto frame = protocol::build_arm_joints_arm(arm_id, a.data(), 6);
     std::lock_guard<std::mutex> lock(g_downlink_mtx);
     size_t sent = 0;
     while (sent < frame.size())
