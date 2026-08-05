@@ -95,7 +95,7 @@ void processTextCommand(const std::string &cmd_line)
     if (lower_cmd == "nod")
     {
         g_auto_cam_running = true;
-        g_cam_pan = 113.0f;
+        g_cam_pan = 45.0f;
         g_cam_tilt = 50.0f;
         if (g_serial_fd >= 0)
         {
@@ -118,7 +118,7 @@ void processTextCommand(const std::string &cmd_line)
                     {
             // 1. 获取 Nod 记忆角度 (如果没 Nod 过，给个默认兜底)
             if (g_calibrated_pan < 0 || g_calibrated_tilt < 0) {
-                g_calibrated_pan = 113.0f; g_calibrated_tilt = 45.0f;
+                g_calibrated_pan = 45.0f; g_calibrated_tilt = 45.0f;
             }
 
             // 2. 摄像头转到特定姿态 (水平维持 nod，向下绝对角度 30 度)

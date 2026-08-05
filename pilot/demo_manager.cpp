@@ -243,11 +243,11 @@ namespace DemoManager
                         float f_zx = 0.0f, f_zy = 0.3f, f_zz = -0.916f;
                         float f_xx = -1.0f, f_xy = 0.0f, f_xz = 0.0f;
 
-                        g_arm.moveSmooth(1, px - 1, py - 9.0f, 0.2, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(1, px - 1, py - 9.0f, 1.5, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         std::cout << "\n>>>开始执行demo132 <<<" << std::endl;
                         g_arm.setServoAngle(1, 15, Arm1_open);
                         usleep(600000);
-                        g_arm.moveSmooth(1, px , py - 2.5f, 1.0, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
+                        g_arm.moveSmooth(1, px , py - 2.5f, 1.5, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz);
                         usleep(500000);
                         g_arm.setServoAngle(1, 15, Arm1_close);
                         usleep(1000000);
@@ -378,7 +378,7 @@ namespace DemoManager
 
                 g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 3.2f , 9.5f, 0.1f , f_zy, f_zz, f_xx, f_xy, f_xz);
                 g_arm.setServoAngle(1, 15, Arm1_open); usleep(600000);
-                g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 0.2f, 6.0f, 0.1f, f_zy, f_zz, f_xx, f_xy, f_xz);
+                g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 2.2f, 6.0f, 0.1f, f_zy, f_zz, f_xx, f_xy, f_xz);
                 g_arm.setServoAngle(1, 15, Arm1_close); 
             
                 //视觉闭环
@@ -449,7 +449,7 @@ namespace DemoManager
             float px_arm1 = px + py_arm1_x;  // X 轴标定误差补偿
             float py_arm1 = py + py_arm1_y;  // Y 轴平移厘米，对齐物理空间
 
-            g_arm.moveSmooth(0, px -1.5f, py + 9.0f , pz_arm0_down + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
+            g_arm.moveSmooth(0, px -1.5f, py + 10.0f , pz_arm0_down + 0.3f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
 
             g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
