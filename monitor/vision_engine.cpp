@@ -350,8 +350,8 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
             }
             else if (current_task.raw_cmd == "align92")
             {
-                left_threshold = 300.0f; // ★ align92 专属：中心偏左死区
-                right_threshold = 60.0f; // ★ align92 专属：中心偏右死区
+                left_threshold = 200.0f; // ★ align92 专属：中心偏左死区
+                right_threshold = 10.0f; // ★ align92 专属：中心偏右死区
             }
             else if (current_task.raw_cmd == "align93")
             {
@@ -1421,8 +1421,8 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                     << " cm | 需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right)
                                     << " cm | 需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" << std::endl;
 
-                        // 复用相同的 2.0 精度阈值
-                        if (std::abs(dx) < 2.5f && std::abs(dy) < 2.5f && std::abs(tilt_angle) < 2.0f)
+                        // align91 92 93的精度阈值
+                        if (std::abs(dx) < 2.0f && std::abs(dy) < 2.8f && std::abs(tilt_angle) < 2.0f)
                         {
                             monitor_log << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << std::endl;
                             extern bool g_wf_align_success;
@@ -2930,6 +2930,61 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
     rectangle(raw_frame, bbox, Scalar(0, 0, 255), 4);
     putText(raw_frame, "ALIGN TARGET", Point(bbox.x, max(bbox.y - 10, 10)), FONT_HERSHEY_SIMPLEX, 0.7, Scalar(0, 0, 255), 2);
     // ==========================================================
+
+    // ==========================================================
+    // 【新增】：align02 专属宏观降级盲走逻辑 (在 PnP 解算前拦截)
+    // ==========================================================
+    if (task.raw_cmd == "align02")
+    {
+        float top_y = bbox.y; // 取蓝色框的上边界
+        float cx = bbox.x + bbox.width / 2.0f; // 取蓝色框的横向中心
+        float img_cx = raw_frame.cols / 2.0f;
+        
+        float cmd_dx = 0.0f;
+        float cmd_dy = 0.0f;
+        bool need_macro_adj = false;
+
+        // 1. 距离判断 (前后)：看上边界，如果落在画面顶端 30% 往下，说明离得太近
+        float top_threshold = raw_frame.rows * 0.35f;
+        if (top_y > top_threshold)
+        {
+            cmd_dx = 3.0f; // 下发正数代表后移 3 厘米
+            need_macro_adj = true;
+            cout << ">>> [宏观对齐] align02 蓝色顶端低于画面 30%，下发后退！" << endl;
+        }
+
+        // 2. 左右判断：基于中心点，左死区 10，右死区 300
+        float left_threshold = 10.0f;
+        float right_threshold = 300.0f;
+
+        if (cx < img_cx - left_threshold)
+        {
+            cmd_dy = -3.0f; // 下发负数代表左移 3 厘米
+            need_macro_adj = true;
+            cout << ">>> [宏观对齐] align02 中心偏左(越过 10px)，下发左移！" << endl;
+        }
+        else if (cx > img_cx + right_threshold)
+        {
+            cmd_dy = 3.0f; // 下发正数代表右移 3 厘米
+            need_macro_adj = true;
+            cout << ">>> [宏观对齐] align02 中心偏右(越过 300px)，下发右移！" << endl;
+        }
+
+        // 如果触发了宏观移动，立刻拦截，挂起后续的复杂解算
+        if (need_macro_adj)
+        {
+            cout << ">>> [宏观对齐] 挂起精细 PnP，下发定长盲走: DX=" << cmd_dx << "cm, DY=" << cmd_dy << "cm" << endl;
+            extern int g_serial_fd;
+            if (g_serial_fd >= 0)
+            {
+                char buf[128];
+                // 仅平移不旋转
+                sprintf(buf, "ALIGN_MOVE %.1f %.1f 0.0\r\n", cmd_dx, cmd_dy);
+                write(g_serial_fd, buf, strlen(buf));
+            }
+            return; // 拦截成功！彻底跳过后面的角点提取和 PnP
+        }
+    }
 
     // 将外围框四周稍微放大 30 像素，防止切掉边缘检测线和角点
     int expand_px = 30;

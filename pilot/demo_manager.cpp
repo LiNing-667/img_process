@@ -449,7 +449,7 @@ namespace DemoManager
             float px_arm1 = px + py_arm1_x;  // X 轴标定误差补偿
             float py_arm1 = py + py_arm1_y;  // Y 轴平移厘米，对齐物理空间
 
-            g_arm.moveSmooth(0, px -1.5f, py + 9.0f , pz_arm0_down + 1.0f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
+            g_arm.moveSmooth(0, px -1.5f, py + 10.0f , pz_arm0_down + 0.3f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); usleep(1500000);
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子
 
             g_arm.setServoAngle(1, 15, Arm1_open); usleep(1000000);
