@@ -4,6 +4,7 @@
  */
 #include "cmd_gateway.h"
 #include "global_state.h"
+#include "monitor_log.h"
 #include <iostream>
 #include <unistd.h>
 #include <thread>
@@ -13,6 +14,34 @@
 using namespace std;
 
 // ==========================================================
+// 视觉任务单槽提交协议 (解决 g_demo_task 写竞争)
+// 所有来源都必须通过这两个函数写入任务，禁止再直接裸写 g_demo_task
+// ==========================================================
+bool task_try_submit(const DemoTask &task)
+{
+    std::lock_guard<std::mutex> lock(g_task_mtx);
+    if (g_demo_task.pending)
+    {
+        monitor_log << "  ⚠ [任务网关] 视觉任务槽被占用，拒绝新任务: "
+                    << task.raw_cmd << " (当前排队: " << g_demo_task.raw_cmd << ")" << std::endl;
+        return false;
+    }
+    g_demo_task = task;
+    g_demo_task.pending = true;
+    return true;
+}
+
+void task_force_submit(const DemoTask &task)
+{
+    std::lock_guard<std::mutex> lock(g_task_mtx);
+    if (g_demo_task.pending)
+        monitor_log << "  ⚠ [任务网关] 强制覆盖排队中的任务: "
+                    << g_demo_task.raw_cmd << " -> " << task.raw_cmd << std::endl;
+    g_demo_task = task;
+    g_demo_task.pending = true;
+}
+
+// ==========================================================
 // 【新增】：stop 与 restart
 // ==========================================================
 static std::atomic<bool> g_macro_paused{false};
@@ -20,15 +49,16 @@ static std::mutex g_macro_pause_mtx;
 static std::condition_variable g_macro_pause_cv;
 static std::string g_macro_last_step = "初始未启动";
 // 用于在动作链每个环节后检查是否需要挂起的护栏函数
-void checkMacroPausePoint(const std::string& step_desc)
+void checkMacroPausePoint(const std::string &step_desc)
 {
     g_macro_last_step = step_desc;
     if (g_macro_paused.load())
     {
-        std::cout << "\n>>> [宏动作链-挂起] 已安全停留在节点: [" << step_desc << "]，等待 RESTART 指令..." << std::endl;
+        monitor_log << "\n>>> [宏动作链-挂起] 已安全停留在节点: [" << step_desc << "]，等待 RESTART 指令..." << std::endl;
         std::unique_lock<std::mutex> lock(g_macro_pause_mtx);
-        g_macro_pause_cv.wait(lock, []() { return !g_macro_paused.load(); });
-        std::cout << "\n>>> [宏动作链-唤醒] 接收到恢复信号，从 [" << step_desc << "] 节点继续执行！" << std::endl;
+        g_macro_pause_cv.wait(lock, []()
+                              { return !g_macro_paused.load(); });
+        monitor_log << "\n>>> [宏动作链-唤醒] 接收到恢复信号，从 [" << step_desc << "] 节点继续执行！" << std::endl;
     }
 }
 
@@ -43,7 +73,7 @@ void processTextCommand(const std::string &cmd_line)
     if (lower_cmd == "stop")
     {
         g_macro_paused = true;
-        std::cout << "\n>>> [宏控制] 收到 STOP 指令！当前正在执行的底层动作完成后将安全挂起..." << std::endl;
+        monitor_log << "\n>>> [宏控制] 收到 STOP 指令！当前正在执行的底层动作完成后将安全挂起..." << std::endl;
         return;
     }
     if (lower_cmd == "restart")
@@ -53,13 +83,13 @@ void processTextCommand(const std::string &cmd_line)
             g_macro_paused = false;
         }
         g_macro_pause_cv.notify_all();
-        std::cout << "\n>>> [宏控制] 收到 RESTART 指令！通知主调度线程恢复运行..." << std::endl;
+        monitor_log << "\n>>> [宏控制] 收到 RESTART 指令！通知主调度线程恢复运行..." << std::endl;
         return;
     }
     if (lower_cmd == "fix")
     {
         g_trigger_aruco_fix = true;
-        std::cout << "\n>>> [静态标定] 已下发单次 ArUco 捕捉指令..." << std::endl;
+        monitor_log << "\n>>> [静态标定] 已下发单次 ArUco 捕捉指令..." << std::endl;
         return;
     }
     if (lower_cmd == "nod")
@@ -73,7 +103,7 @@ void processTextCommand(const std::string &cmd_line)
             sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
             write(g_serial_fd, buf, strlen(buf));
         }
-        std::cout << "\n>>> [自适应云台] 启动！开始提取车板特征曲线..." << std::endl;
+        monitor_log << "\n>>> [自适应云台] 启动！开始提取车板特征曲线..." << std::endl;
         return;
     }
 
@@ -81,7 +111,7 @@ void processTextCommand(const std::string &cmd_line)
     if (lower_cmd.rfind("find", 0) == 0 && lower_cmd.length() == 5)
     {
         int target_id = lower_cmd[4] - '0';
-        std::cout << "\n>>> [状态机] 启动单帧寻物流 (锁定ID=" << target_id << ")..." << std::endl;
+        monitor_log << "\n>>> [状态机] 启动单帧寻物流 (锁定ID=" << target_id << ")..." << std::endl;
 
         // 开启独立线程，专门用来等云台到位，绝对不卡死主图像管线
         std::thread([target_id]()
@@ -101,13 +131,14 @@ void processTextCommand(const std::string &cmd_line)
             // 3. 闭眼等待云台转动及画面完全稳定
             usleep(1500000); 
 
-            // 4. 下发单帧视觉处理任务给 VisionEngine
+            // 4. 下发单帧视觉处理任务给 VisionEngine (任务槽忙则放弃本次)
             {
-                std::lock_guard<std::mutex> lock(g_task_mtx);
-                g_demo_task.pending = true;
-                g_demo_task.raw_cmd = "HSV_FIND_ONESHOT";
-                g_demo_task.class_id = target_id; // 传递 x 的 ID 给 PNP
-                g_demo_task.arm_id = 1;           // 强制在 ARM1 参考系下结算
+                DemoTask t;
+                t.raw_cmd = "HSV_FIND_ONESHOT";
+                t.class_id = target_id; // 传递 x 的 ID 给 PNP
+                t.arm_id = 1;           // 强制在 ARM1 参考系下结算
+                if (!task_try_submit(t))
+                    monitor_log << "  ⚠ [find" << target_id << "] 视觉任务槽忙，本次寻物流已放弃" << std::endl;
             } })
             .detach();
         return;
@@ -117,9 +148,9 @@ void processTextCommand(const std::string &cmd_line)
     {
         std::thread([]()
                     {
-            std::cout << "\n=============================================" << std::endl;
-            std::cout << ">>> 全自动装配宏动作链启动 (主调度流)" << std::endl;
-            std::cout << "=============================================\n" << std::endl;
+            monitor_log << "\n=============================================" << std::endl;
+            monitor_log << ">>> 全自动装配宏动作链启动 (主调度流)" << std::endl;
+            monitor_log << "=============================================\n" << std::endl;
 
             // 每次启动全新的 start 时，确保不处于暂停状态
             g_macro_paused = false;
@@ -133,7 +164,7 @@ void processTextCommand(const std::string &cmd_line)
                     usleep(50000); 
                     timeout_ms -= 50; 
                 }
-                if (timeout_ms <= 0) std::cout << "  ⚠ [超时] DEMO 未在时限内完成！" << std::endl;
+                if (timeout_ms <= 0) monitor_log << "  ⚠ [超时] DEMO 未在时限内完成！" << std::endl;
             };
 
             auto wait_cmd = [](int timeout_ms = 150000, const std::string& step_name = "直通指令") {
@@ -143,7 +174,7 @@ void processTextCommand(const std::string &cmd_line)
                     usleep(50000); 
                     timeout_ms -= 50; 
                 }
-                if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 直通指令未在时限内完成！" << std::endl;
+                if (timeout_ms <= 0) monitor_log << "  ⚠ [超时] 直通指令未在时限内完成！" << std::endl;
             };
 
             auto wait_chassis = [](int timeout_ms = 200000, const std::string& step_name = "底盘移动") {
@@ -153,7 +184,7 @@ void processTextCommand(const std::string &cmd_line)
                     usleep(50000); 
                     timeout_ms -= 50; 
                 }
-                if (timeout_ms <= 0) std::cout << "  ⚠ [超时] 底盘未在时限内到达！" << std::endl;
+                if (timeout_ms <= 0) monitor_log << "  ⚠ [超时] 底盘未在时限内到达！" << std::endl;
             };
 
             // 【新增】：用于替代剧本中所有 raw usleep() 的可打断延时器
@@ -170,7 +201,7 @@ void processTextCommand(const std::string &cmd_line)
                     char buf[64];
                     sprintf(buf, "MOVE %.1f %.1f %.1f\r\n", tx, ty, tyaw);
                     write(g_serial_fd, buf, strlen(buf));
-                    std::cout << ">>> [动作链] 下发底盘寻路: X:" << tx << " Y:" << ty << " Yaw:" << tyaw << std::endl;
+                    monitor_log << ">>> [动作链] 下发底盘寻路: X:" << tx << " Y:" << ty << " Yaw:" << tyaw << std::endl;
                 }
                 char desc[64];
                 sprintf(desc, "底盘移动到 (%.1f, %.1f)", tx, ty);
@@ -178,20 +209,20 @@ void processTextCommand(const std::string &cmd_line)
             };
 
             auto do_vision_demo = [&](int arm_id, int class_id, int action_id, const std::string& cmd) {
-                std::cout << "\n>>> [动作链] 派发视觉任务: " << cmd << " (ARM" << arm_id << " 锁定 ID=" << class_id << ")" << std::endl;
+                monitor_log << "\n>>> [动作链] 派发视觉任务: " << cmd << " (ARM" << arm_id << " 锁定 ID=" << class_id << ")" << std::endl;
                 {
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.arm_id = arm_id;
-                    g_demo_task.class_id = class_id;
-                    g_demo_task.action_id = action_id;
-                    g_demo_task.raw_cmd = cmd;
+                    DemoTask t;
+                    t.arm_id = arm_id;
+                    t.class_id = class_id;
+                    t.action_id = action_id;
+                    t.raw_cmd = cmd;
+                    task_force_submit(t); // 主流水线：强制占用任务槽
                 }
                 wait_demo(350000, "视觉任务 " + cmd);
             };
             
             auto do_031_sequence = [&]() {
-                std::cout << "\n>>> [动作链] 下发 DO031 (换手)，并等待视觉闭环装配全流程完成..." << std::endl;
+                monitor_log << "\n>>> [动作链] 下发 DO031 (换手)，并等待视觉闭环装配全流程完成..." << std::endl;
                 if (g_serial_fd >= 0) {
                     std::string full_cmd = "DO031\r\n";
                     write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
@@ -200,7 +231,7 @@ void processTextCommand(const std::string &cmd_line)
             };
             
             auto send_raw = [&](const std::string& cmd) {
-                std::cout << "\n>>> [动作链] 强插直通指令: " << cmd << std::endl;
+                monitor_log << "\n>>> [动作链] 强插直通指令: " << cmd << std::endl;
                 if (g_serial_fd >= 0) {
                     std::string full_cmd = cmd + "\r\n";
                     write(g_serial_fd, full_cmd.c_str(), full_cmd.length());
@@ -209,7 +240,7 @@ void processTextCommand(const std::string &cmd_line)
             };
 
             auto auto_align_loop = [](const std::string& align_cmd) {
-                std::cout << "\n>>> [动作链] 开始全自动闭环对齐: " << align_cmd << std::endl;
+                monitor_log << "\n>>> [动作链] 开始全自动闭环对齐: " << align_cmd << std::endl;
                 extern bool g_wf_align_done;
                 extern bool g_wf_align_success;
                 extern bool g_reset_align_memory;
@@ -225,9 +256,9 @@ void processTextCommand(const std::string &cmd_line)
                     g_wf_align_success = false;
                     
                     {
-                        std::lock_guard<std::mutex> lock(g_task_mtx);
-                        g_demo_task.pending = true;
-                        g_demo_task.raw_cmd = align_cmd; 
+                        DemoTask t;
+                        t.raw_cmd = align_cmd;
+                        task_force_submit(t); // 主流水线：强制占用任务槽
                     }
                     
                     int timeout = 15000; 
@@ -239,12 +270,12 @@ void processTextCommand(const std::string &cmd_line)
                     }
                     
                     if (g_wf_align_success) {
-                        std::cout << ">>> [动作链] 完美达标 (收到 B 信号)！" << align_cmd << " 调整结束。" << std::endl;
+                        monitor_log << ">>> [动作链] 完美达标 (收到 B 信号)！" << align_cmd << " 调整结束。" << std::endl;
                         break; 
                     }
                     
                     if (g_wf_align_done) {
-                        std::cout << ">>> [动作链] 动作完成 (收到 A 信号)，等待 1.5 秒画面稳定后重试..." << std::endl;
+                        monitor_log << ">>> [动作链] 动作完成 (收到 A 信号)，等待 1.5 秒画面稳定后重试..." << std::endl;
                         
                         // 【核心修改】：把不可打断的 usleep(2500000) 换成支持暂停的轮询
                         int wait_stable = 2500000;
@@ -254,7 +285,7 @@ void processTextCommand(const std::string &cmd_line)
                             wait_stable -= 50000;
                         }
                     } else if (timeout <= 0) {
-                        std::cout << ">>> [动作链] 严重警告: 等待底层动作超时，强行跳出对齐！" << std::endl;
+                        monitor_log << ">>> [动作链] 严重警告: 等待底层动作超时，强行跳出对齐！" << std::endl;
                         break;
                     }
                 }
@@ -328,7 +359,7 @@ void processTextCommand(const std::string &cmd_line)
             do_vision_demo(0, 9, 1, "DEMO091");
             //差不多了......
 
-            std::cout << ">>> 动作链结束！" << std::endl; })
+            monitor_log << ">>> 动作链结束！" << std::endl; })
             .detach();
         return;
     }
@@ -340,16 +371,18 @@ void processTextCommand(const std::string &cmd_line)
         int z = lower_cmd[6] - '0';
         if (x >= 0 && x <= 1 && y >= 0 && z >= 0)
         {
-            std::lock_guard<std::mutex> lock(g_task_mtx);
-            g_demo_task.pending = true;
-            g_demo_task.arm_id = x;
-            g_demo_task.class_id = y;
-            g_demo_task.action_id = z;
             std::string upper_cmd = lower_cmd;
             for (auto &c : upper_cmd)
                 c = toupper(c);
-            g_demo_task.raw_cmd = upper_cmd;
-            std::cout << "[Monitor] 已接收视觉任务 -> 目标臂: ARM" << x << " | 物体ID: " << y << std::endl;
+            DemoTask t;
+            t.arm_id = x;
+            t.class_id = y;
+            t.action_id = z;
+            t.raw_cmd = upper_cmd;
+            if (task_try_submit(t))
+                monitor_log << "[Monitor] 已接收视觉任务 -> 目标臂: ARM" << x << " | 物体ID: " << y << std::endl;
+            else
+                monitor_log << "  ⚠ [Monitor] 视觉任务槽忙，已拒绝: " << upper_cmd << std::endl;
             return;
         }
     }
@@ -362,17 +395,18 @@ void processTextCommand(const std::string &cmd_line)
         {
             std::string send_str = upper_cmd + " 0 0 0 0 0 0 0 0 0 0\r\n";
             write(g_serial_fd, send_str.c_str(), send_str.length());
-            std::cout << "[Monitor] 下发盲操作 -> " << upper_cmd << std::endl;
+            monitor_log << "[Monitor] 下发盲操作 -> " << upper_cmd << std::endl;
         }
         return;
     }
     if (lower_cmd.rfind("align", 0) == 0)
     {
-        std::cout << "[Monitor] 拦截到 PC 终端对齐请求，已派发给视觉引擎: " << lower_cmd << std::endl;
-        std::lock_guard<std::mutex> lock(g_task_mtx);
-        g_demo_task.pending = true;
-        // 注意这里一定要传 lower_cmd，这样才能把 "align01" 完整传给视觉引擎
-        g_demo_task.raw_cmd = lower_cmd;
+        monitor_log << "[Monitor] 拦截到 PC 终端对齐请求，已派发给视觉引擎: " << lower_cmd << std::endl;
+        {
+            DemoTask t;
+            t.raw_cmd = lower_cmd; // 一定要传 lower_cmd，把 "align01" 完整传给视觉引擎
+            task_try_submit(t);
+        }
         return; // 必须 return，坚决不让它透传发给 Pilot！
     }
 
@@ -381,15 +415,15 @@ void processTextCommand(const std::string &cmd_line)
     {
         std::string send_str = cmd_line + "\r\n";
         write(g_serial_fd, send_str.c_str(), send_str.length());
-        std::cout << "[串口发往Pilot] -> " << cmd_line << std::endl;
+        monitor_log << "[串口发往Pilot] -> " << cmd_line << std::endl;
     }
 }
 
 void terminalCommandThreadFunc()
 {
-    std::cout << "========================================================" << std::endl;
-    std::cout << "[终端] 串口遥控模式就绪！输入 demoxyz 触发视觉检测与抓取！" << std::endl;
-    std::cout << "========================================================" << std::endl;
+    monitor_log << "========================================================" << std::endl;
+    monitor_log << "[终端] 串口遥控模式就绪！输入 demoxyz 触发视觉检测与抓取！" << std::endl;
+    monitor_log << "========================================================" << std::endl;
 
     std::string cmd_line;
     while (std::getline(std::cin, cmd_line))
@@ -424,75 +458,75 @@ void serialReadThreadFunc()
 
                 if (line.rfind("H", 0) == 0 && line.length() >= 3)
                 {
-                    std::cout << "\n[Monitor 接收] 收到底层组装完成信号: " << line << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHECK_" + line;
+                    monitor_log << "\n[Monitor 接收] 收到底层组装完成信号: " << line << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHECK_" + line;
+                    task_try_submit(t);
                 }
                 else if (line.rfind("FIX_111", 0) == 0 || line.rfind("FIX_131", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到底层视觉对齐请求: " << line << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = line;
+                    monitor_log << "\n[Monitor 接收] 收到底层视觉对齐请求: " << line << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = line;
+                    task_try_submit(t);
                 }
                 else if (line.rfind("FIND_ACK_", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到云台就位确认: " << line << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = line;
+                    monitor_log << "\n[Monitor 接收] 收到云台就位确认: " << line << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = line;
+                    task_try_submit(t);
                 }
                 else if (line.rfind("CHECK_091", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到右臂悬空信号，开始视觉验核！" << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHECK_091";
+                    monitor_log << "\n[Monitor 接收] 收到右臂悬空信号，开始视觉验核！" << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHECK_091";
+                    task_try_submit(t);
                 }
                 else if (line.rfind("CHECK_001", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到 DEMO001 悬空信号，开始视觉验核！" << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHECK_001";
+                    monitor_log << "\n[Monitor 接收] 收到 DEMO001 悬空信号，开始视觉验核！" << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHECK_001";
+                    task_try_submit(t);
                 }
                 else if (line.rfind("CHECK_002", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到 DEMO002 悬空信号，开始视觉验核！" << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHECK_002";
+                    monitor_log << "\n[Monitor 接收] 收到 DEMO002 悬空信号，开始视觉验核！" << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHECK_002";
+                    task_try_submit(t);
                 }
                 else if (line.rfind("CHECK_003", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到 DEMO003 悬空信号，开始视觉验核！" << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHECK_003";
+                    monitor_log << "\n[Monitor 接收] 收到 DEMO003 悬空信号，开始视觉验核！" << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHECK_003";
+                    task_try_submit(t);
                 }
                 else if (line.rfind("CHASSIS_DONE", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到小车底盘就位确认: " << line << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = "CHASSIS_DONE";
+                    monitor_log << "\n[Monitor 接收] 收到小车底盘就位确认: " << line << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = "CHASSIS_DONE";
+                    task_try_submit(t);
                 }
 
                 // 【已有的】拦截以 align 开头的视觉对齐指令
                 else if (line.rfind("align", 0) == 0)
                 {
-                    std::cout << "[Monitor] 拦截到对齐请求，已派发给视觉引擎: " << line << std::endl;
-                    std::lock_guard<std::mutex> lock(g_task_mtx);
-                    g_demo_task.pending = true;
-                    g_demo_task.raw_cmd = line;
+                    monitor_log << "[Monitor] 拦截到对齐请求，已派发给视觉引擎: " << line << std::endl;
+                    DemoTask t;
+                    t.raw_cmd = line;
+                    task_try_submit(t);
                 }
                 // ======================================================
                 // 【新增】：拦截 Pilot 发回的 A 信号 (ALIGN_DONE)
                 // ======================================================
                 else if (line.rfind("ALIGN_DONE", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到小车对齐动作完成信号(A): " << line << std::endl;
+                    monitor_log << "\n[Monitor 接收] 收到小车对齐动作完成信号(A): " << line << std::endl;
                     extern bool g_wf_align_done;
                     g_wf_align_done = true; // 触发 A 信号
                 }
@@ -501,7 +535,7 @@ void serialReadThreadFunc()
                 // ======================================================
                 else if (line.rfind("DEMO_DONE", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到机械臂动作完成信号: " << line << std::endl;
+                    monitor_log << "\n[Monitor 接收] 收到机械臂动作完成信号: " << line << std::endl;
                     g_wf_demo_done = true;
                 }
                 // ======================================================
@@ -509,7 +543,7 @@ void serialReadThreadFunc()
                 // ======================================================
                 else if (line.rfind("CMD_DONE", 0) == 0)
                 {
-                    std::cout << "\n[Monitor 接收] 收到直通指令完成信号: " << line << std::endl;
+                    monitor_log << "\n[Monitor 接收] 收到直通指令完成信号: " << line << std::endl;
                     g_wf_cmd_done = true;
                 }
             }

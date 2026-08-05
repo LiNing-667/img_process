@@ -7,6 +7,7 @@
 #include "config.h"
 #include "ai_infer.h"
 #include "cv_traditional.h"
+#include "monitor_log.h"
 #include <opencv2/aruco.hpp>
 #include <iostream>
 #include <unistd.h>
@@ -30,7 +31,7 @@ Mat g_cache_align02_rvec;
 Mat g_cache_align02_tvec;
 Point2f g_cache_align02_center;
 // ==========================================================
-// align91/92/93 -> DEMO091/001/002 
+// align91/92/93 -> DEMO091/001/002
 // ==========================================================
 bool g_skip_demo091_vision = false;
 Pose6D g_cache_align91_pose;
@@ -203,9 +204,9 @@ void VisionEngine::handleSingleAxisServo(const DemoTask &current_task, Mat &raw_
         g_arm_x_offset_cm[target_arm] += delta_x_cm; // 独立累加到各自的补偿系统中
 
         float calibrated_px = g_cl_state.last_pose.x + delta_x_cm;
-        std::cout << "\n>>> [视觉对齐成功] PnP 深度提取: Tz=" << tz_mm << "mm | 动态比例尺: " << dynamic_scale_cm << " cm/px" << std::endl;
-        std::cout << ">>> ArUco纵向: " << aruco_center.y << " | 物体纵向: " << obj_center.y << std::endl;
-        std::cout << ">>> X轴(前后) 校准量: " << delta_x_cm << " cm" << std::endl;
+        monitor_log << "\n>>> [视觉对齐成功] PnP 深度提取: Tz=" << tz_mm << "mm | 动态比例尺: " << dynamic_scale_cm << " cm/px" << std::endl;
+        monitor_log << ">>> ArUco纵向: " << aruco_center.y << " | 物体纵向: " << obj_center.y << std::endl;
+        monitor_log << ">>> X轴(前后) 校准量: " << delta_x_cm << " cm" << std::endl;
         Pose6D fix_pose = g_cl_state.last_pose;
         fix_pose.x = calibrated_px;
         // 根据接收到的 FIX 信号，动态决定下一步该发什么抓取指令
@@ -218,7 +219,7 @@ void VisionEngine::handleSingleAxisServo(const DemoTask &current_task, Mat &raw_
     }
     else
     {
-        std::cout << "\n>>> [伺服失败] 未找齐 ArUco 与目标，或深度矩阵丢失！1秒后重试..." << std::endl;
+        monitor_log << "\n>>> [伺服失败] 未找齐 ArUco 与目标，或深度矩阵丢失！1秒后重试..." << std::endl;
         usleep(1000000);
         std::lock_guard<std::mutex> lock(g_task_mtx);
         g_demo_task.pending = true;
@@ -322,8 +323,8 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
             bool need_macro_adj = false;
 
             // 1. 距离判断 (前后)
-            float bottom_threshold_far = raw_frame.rows * 0.66f;
-            float bottom_threshold_close = raw_frame.rows * 0.95f;
+            float bottom_threshold_far = raw_frame.rows * 0.50f;
+            //float bottom_threshold_close = raw_frame.rows * 1.0f;
 
             if (bottom_y < bottom_threshold_far)
             {
@@ -331,12 +332,12 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                 need_macro_adj = true;
                 cout << ">>> [宏观对齐] " << current_task.raw_cmd << " 蓝色底端偏高，下发前进！" << endl;
             }
-            else if (bottom_y > bottom_threshold_close)
-            {
-                cmd_dx = 3.0f;
-                need_macro_adj = true;
-                cout << ">>> [宏观对齐] " << current_task.raw_cmd << " 蓝色底端贴底，下发后退防撞！" << endl;
-            }
+            //else if (bottom_y > bottom_threshold_close)
+            //{
+            //    cmd_dx = 3.0f;
+            //    need_macro_adj = true;
+            //    cout << ">>> [宏观对齐] " << current_task.raw_cmd << " 蓝色底端贴底，下发后退防撞！" << endl;
+            //}
 
             // 2. 左右判断：为每个对齐任务设立独立的死区参数，方便独立调参！
             float left_threshold = 0.0f;
@@ -344,18 +345,18 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
 
             if (current_task.raw_cmd == "align91")
             {
-                left_threshold = 200.0f; // ★ align91 专属：中心偏左死区
+                left_threshold = 300.0f; // ★ align91 专属：中心偏左死区
                 right_threshold = 60.0f; // ★ align91 专属：中心偏右死区
             }
             else if (current_task.raw_cmd == "align92")
             {
-                left_threshold = 200.0f; // ★ align92 专属：中心偏左死区
+                left_threshold = 300.0f; // ★ align92 专属：中心偏左死区
                 right_threshold = 60.0f; // ★ align92 专属：中心偏右死区
             }
             else if (current_task.raw_cmd == "align93")
             {
-                left_threshold = 60.0f;  // ★ align93 专属：中心偏左死区
-                right_threshold = 60.0f; // ★ align93 专属：中心偏右死区
+                left_threshold = 100.0f;  // ★ align93 专属：中心偏左死区
+                right_threshold = 100.0f; // ★ align93 专属：中心偏右死区
             }
 
             if (cx < img_cx - left_threshold)
@@ -770,7 +771,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                         float test_dist = std::sqrt(test_vec.x * test_vec.x + test_vec.y * test_vec.y);
 
                                         // 第一次推点时，限制单步最大水平跨度，防止直接跳到极远处的杂点
-                                        if (!has_prev_vec && std::abs(test_vec.x) > 300.0f)
+                                        if (!has_prev_vec && std::abs(test_vec.x) > 500.0f)
                                             continue;
 
                                         candidates.push_back({p, test_dist, std::abs(test_vec.y)});
@@ -818,8 +819,8 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                         if (angle_diff > 9.0f)
                                             need_fake = true;
 
-                                        // 连线长短差超过 20% → 补点
-                                        if (best_dist < prev_dist * 0.8f || best_dist > prev_dist * 1.2f)
+                                        // 连线长短差超过 30% → 补点
+                                        if (best_dist < prev_dist * 0.7f || best_dist > prev_dist * 1.3f)
                                             need_fake = true;
                                     }
 
@@ -1354,18 +1355,18 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                     // ==========================================================
                     if (current_task.raw_cmd == "align91" || current_task.raw_cmd == "align92" || current_task.raw_cmd == "align93")
                     {
-                        float target_x = -13.0f; // ★ 你可以按需修改 align91 对齐的X坐标
-                        float target_y = -11.0f; // ★ 你可以按需修改 align91 对齐的Y坐标
+                        float target_x = -13.5f; // ★ 你可以按需修改 align91 对齐的X坐标
+                        float target_y = -10.0f; // ★ 你可以按需修改 align91 对齐的Y坐标
 
                         if (current_task.raw_cmd == "align92")
                         {
                             target_x = -14.0f; // ★ 你可以按需修改 align92 对齐的X坐标
-                            target_y = -11.0f; // ★ 你可以按需修改 align92 对齐的Y坐标
+                            target_y = -10.0f; // ★ 你可以按需修改 align92 对齐的Y坐标
                         }
                         else if (current_task.raw_cmd == "align93")
                         {
                             target_x = -13.0f; // ★ 你可以按需修改 align93 对齐的X坐标
-                            target_y = -14.0f; // ★ 你可以按需修改 align93 对齐的Y坐标
+                            target_y = -13.0f; // ★ 你可以按需修改 align93 对齐的Y坐标
                         }
 
                         float dx = arm_target_pose.x - target_x;
@@ -1409,35 +1410,36 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                             }
                         }
 
-                        cout << "\n>>> [视觉对齐] 触发任务: " << current_task.raw_cmd << " | 边缘倾角:" << tilt_angle << "度" << endl;
-                        cout << ">>> [视觉对齐] 当前X:" << arm_target_pose.x << " Y:" << arm_target_pose.y << " | 原始偏差 dX:" << dx << " dY:" << dy << endl;
+                        monitor_log << "\n>>> [视觉对齐] 触发任务: " << current_task.raw_cmd << " | 边缘倾角:" << tilt_angle << "度" << std::endl;
+                        monitor_log << ">>> [视觉对齐] 当前X:" << arm_target_pose.x << " Y:" << arm_target_pose.y << " | 原始偏差 dX:" << dx << " dY:" << dy << std::endl;
 
                         float move_fwd = -dx;
                         float move_right = dy;
                         float turn_a = tilt_angle;
 
-                        std::cout << ">>> [视觉对齐] 解析到底盘动作 -> 需" << (move_fwd >= 0 ? "前进 " : "后退 ") << std::abs(move_fwd)
-                                  << " cm | 需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right)
-                                  << " cm | 需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" << std::endl;
+                        monitor_log << ">>> [视觉对齐] 解析到底盘动作 -> 需" << (move_fwd >= 0 ? "前进 " : "后退 ") << std::abs(move_fwd)
+                                    << " cm | 需" << (move_right >= 0 ? "右移 " : "左移 ") << std::abs(move_right)
+                                    << " cm | 需" << (turn_a >= 0 ? "右转 " : "左转 ") << std::abs(turn_a) << " 度" << std::endl;
 
                         // 复用相同的 2.0 精度阈值
                         if (std::abs(dx) < 2.5f && std::abs(dy) < 2.5f && std::abs(tilt_angle) < 2.0f)
                         {
-                            cout << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << endl;
+                            monitor_log << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << std::endl;
                             extern bool g_wf_align_success;
                             g_wf_align_success = true;
 
                             // ==========================================================
                             // 【新增数据接力】：精度达标时，强制缓存给 DEMO091 / 001 / 002
                             // ==========================================================
-                            if (current_task.raw_cmd == "align91") {
+                            if (current_task.raw_cmd == "align91")
+                            {
                                 extern bool g_skip_demo091_vision;
                                 g_skip_demo091_vision = true;
                                 g_cache_align91_pose = arm_target_pose;
                                 rvec.copyTo(g_cache_align91_rvec);
                                 tvec.copyTo(g_cache_align91_tvec);
                                 g_cache_align91_center = obj.center;
-                                
+
                                 // 同步代存闭环需要的全局参数 (防止跳过 DEMO091 后丢失参数)
                                 extern Rect g_cache_091_bbox;
                                 extern float g_cache_091_px, g_cache_091_py, g_cache_091_pz;
@@ -1447,14 +1449,15 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                 g_cache_091_pz = arm_target_pose.z;
                                 cout << ">>> [数据接力] 已将 align91 位姿与闭环参数写入高速缓存，等待 DEMO091 取用！" << endl;
                             }
-                            else if (current_task.raw_cmd == "align92") {
+                            else if (current_task.raw_cmd == "align92")
+                            {
                                 extern bool g_skip_demo001_vision;
                                 g_skip_demo001_vision = true;
                                 g_cache_align92_pose = arm_target_pose;
                                 rvec.copyTo(g_cache_align92_rvec);
                                 tvec.copyTo(g_cache_align92_tvec);
                                 g_cache_align92_center = obj.center;
-                                
+
                                 extern Point2f g_cache_pt1;
                                 extern float g_cache_001_px, g_cache_001_py, g_cache_001_pz;
                                 g_cache_pt1 = obj.corners_2d[3];
@@ -1463,14 +1466,15 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                 g_cache_001_pz = arm_target_pose.z;
                                 cout << ">>> [数据接力] 已将 align92 位姿与闭环参数写入高速缓存，等待 DEMO001 取用！" << endl;
                             }
-                            else if (current_task.raw_cmd == "align93") {
+                            else if (current_task.raw_cmd == "align93")
+                            {
                                 extern bool g_skip_demo002_vision;
                                 g_skip_demo002_vision = true;
                                 g_cache_align93_pose = arm_target_pose;
                                 rvec.copyTo(g_cache_align93_rvec);
                                 tvec.copyTo(g_cache_align93_tvec);
                                 g_cache_align93_center = obj.center;
-                                
+
                                 extern Point2f g_cache_pt1;
                                 extern float g_cache_002_px, g_cache_002_py, g_cache_002_pz;
                                 g_cache_pt1 = obj.corners_2d[3];
@@ -1478,6 +1482,17 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                 g_cache_002_py = arm_target_pose.y;
                                 g_cache_002_pz = arm_target_pose.z;
                                 cout << ">>> [数据接力] 已将 align93 位姿与闭环参数写入高速缓存，等待 DEMO002 取用！" << endl;
+                            }
+                        }
+                        else
+                        {
+                            cout << ">>> [视觉对齐] 误差超限，下发 ALIGN_MOVE 动作..." << endl;
+                            extern int g_serial_fd;
+                            if (g_serial_fd >= 0)
+                            {
+                                char buf[128];
+                                sprintf(buf, "ALIGN_MOVE %.1f %.1f %.1f\r\n", dx, dy, tilt_angle);
+                                write(g_serial_fd, buf, strlen(buf));
                             }
                         }
                         target_found = true;
@@ -1494,8 +1509,8 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                     tvec.copyTo(g_cl_state.last_tvec);
                     g_cl_state.last_obj_center = obj.center;
 
-                    cout << ">>> [坐标转化完成] 发现目标物体 ID: " << obj.class_id << "\n    下发串口指令 -> " << current_task.raw_cmd
-                         << " 移动至: X=" << arm_target_pose.x << " Y=" << arm_target_pose.y << " Z=" << arm_target_pose.z << " (厘米)" << endl;
+                    monitor_log << ">>> [坐标转化完成] 发现目标物体 ID: " << obj.class_id << "\n    下发串口指令 -> " << current_task.raw_cmd
+                                << " 移动至: X=" << arm_target_pose.x << " Y=" << arm_target_pose.y << " Z=" << arm_target_pose.z << " (厘米)" << std::endl;
 
                     // 【新增】：如果是 DEMO091，把框和坐标存下来供闭环使用
 
@@ -1532,12 +1547,12 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
     }
     if (!target_found)
     {
-        cout << "[Monitor] 视觉检测结束。视野中未找到满足要求的目标 (ID=" << current_task.class_id << ")" << endl;
+        monitor_log << "[Monitor] 视觉检测结束。视野中未找到满足要求的目标 (ID=" << current_task.class_id << ")" << std::endl;
 
         // 【新增】：如果它是对齐任务且没找到目标，触发恢复机制
         if (current_task.raw_cmd == "align91" || current_task.raw_cmd == "align92" || current_task.raw_cmd == "align93")
         {
-            cout << ">>> [视觉对齐] 视野内未发现目标，触发寻找恢复机制！" << endl;
+            monitor_log << ">>> [视觉对齐] 视野内未发现目标，触发寻找恢复机制！" << std::endl;
             std::thread([]()
                         {
                             extern int g_serial_fd;
@@ -1562,7 +1577,7 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
 
 void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
 {
-    
+
     // ==========================================================
     // 【极限优化】：拦截 DEMO000 / 091 / 001 / 002，使用 align 的缓存结果秒杀任务
     // ==========================================================
@@ -1573,8 +1588,8 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
 
     if (task.raw_cmd == "DEMO000" && g_skip_demo000_vision)
     {
-        cout << "\n>>> [极速秒杀] 截获 DEMO000！复用 align02 完美对齐结果，跳过双模型推理，直接下发！" << endl;
-        g_skip_demo000_vision = false; 
+        monitor_log << "\n>>> [极速秒杀] 截获 DEMO000！复用 align02 完美对齐结果，跳过双模型推理，直接下发！" << std::endl;
+        g_skip_demo000_vision = false;
 
         extern Pose6D g_cache_align02_pose;
         extern Mat g_cache_align02_rvec, g_cache_align02_tvec;
@@ -1586,12 +1601,12 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
         g_cl_state.last_obj_center = g_cache_align02_center;
 
         pilot_comm.sendDemoCommand(task.raw_cmd, g_cache_align02_pose);
-        return; 
+        return;
     }
     else if (task.raw_cmd == "DEMO091" && g_skip_demo091_vision)
     {
-        cout << "\n>>> [极速秒杀] 截获 DEMO091！复用 align91 完美对齐结果，跳过视觉推理，直接下发！" << endl;
-        g_skip_demo091_vision = false; 
+        monitor_log << "\n>>> [极速秒杀] 截获 DEMO091！复用 align91 完美对齐结果，跳过视觉推理，直接下发！" << std::endl;
+        g_skip_demo091_vision = false;
 
         extern Pose6D g_cache_align91_pose;
         extern Mat g_cache_align91_rvec, g_cache_align91_tvec;
@@ -1607,8 +1622,8 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
     }
     else if (task.raw_cmd == "DEMO001" && g_skip_demo001_vision)
     {
-        cout << "\n>>> [极速秒杀] 截获 DEMO001！复用 align92 完美对齐结果，跳过视觉推理，直接下发！" << endl;
-        g_skip_demo001_vision = false; 
+        monitor_log << "\n>>> [极速秒杀] 截获 DEMO001！复用 align92 完美对齐结果，跳过视觉推理，直接下发！" << std::endl;
+        g_skip_demo001_vision = false;
 
         extern Pose6D g_cache_align92_pose;
         extern Mat g_cache_align92_rvec, g_cache_align92_tvec;
@@ -1624,8 +1639,8 @@ void VisionEngine::processTask(const DemoTask &task, Mat &raw_frame)
     }
     else if (task.raw_cmd == "DEMO002" && g_skip_demo002_vision)
     {
-        cout << "\n>>> [极速秒杀] 截获 DEMO002！复用 align93 完美对齐结果，跳过视觉推理，直接下发！" << endl;
-        g_skip_demo002_vision = false; 
+        monitor_log << "\n>>> [极速秒杀] 截获 DEMO002！复用 align93 完美对齐结果，跳过视觉推理，直接下发！" << std::endl;
+        g_skip_demo002_vision = false;
 
         extern Pose6D g_cache_align93_pose;
         extern Mat g_cache_align93_rvec, g_cache_align93_tvec;
@@ -1904,7 +1919,7 @@ void VisionEngine::processAutoCamera(Mat &raw_frame)
             // 记录下当前完美的基准角度
             g_calibrated_pan = g_cam_pan;
             g_calibrated_tilt = g_cam_tilt;
-            std::cout << "\n>>> [自适应云台] 校准完美并已记忆！落点 -> Pan: " << g_calibrated_pan << " Tilt: " << g_calibrated_tilt << std::endl;
+            monitor_log << "\n>>> [自适应云台] 校准完美并已记忆！落点 -> Pan: " << g_calibrated_pan << " Tilt: " << g_calibrated_tilt << std::endl;
         }
         else
         {
@@ -1935,13 +1950,15 @@ void VisionEngine::processAutoCamera(Mat &raw_frame)
                 sprintf(buf, "CAM %.1f %.1f\r\n", g_cam_pan, g_cam_tilt);
                 write(g_serial_fd, buf, strlen(buf));
             }
-            std::cout << "[伺服动态] 俯仰残差: " << err_tilt << " | 偏航残差: " << err_pan
-                      << " | 下发 CAM: " << g_cam_pan << " " << g_cam_tilt << std::endl;
+            // 【仅终端】逐帧伺服残差，高频不转发上位机
+            monitor_log_local << "[伺服动态] 俯仰残差: " << err_tilt << " | 偏航残差: " << err_pan
+                              << " | 下发 CAM: " << g_cam_pan << " " << g_cam_tilt << std::endl;
         }
     }
     else
     {
-        std::cout << "[云台伺服警告] 视野内丢失车板！正在自动向下低头寻找..." << std::endl;
+        // 【仅终端】逐帧丢失警告，高频不转发上位机
+        monitor_log_local << "[云台伺服警告] 视野内丢失车板！正在自动向下低头寻找..." << std::endl;
         // 每次找不到时，让俯仰角向下低头 1.0 度 (度数越大越往下)
         g_cam_tilt += 1.0f;
         if (g_cam_tilt > 70.0f)
@@ -1978,13 +1995,13 @@ void VisionEngine::processArucoFix(Mat &raw_frame)
 
         if (!marker_ids.empty())
         {
-            std::cout << "\n>>> [ArUco 标定成功] 成功锁定机械爪基准码 (ID: " << marker_ids[0] << ")" << std::endl;
+            monitor_log << "\n>>> [ArUco 标定成功] 成功锁定机械爪基准码 (ID: " << marker_ids[0] << ")" << std::endl;
             Point2f p1 = marker_corners[0][0], p2 = marker_corners[0][1], p3 = marker_corners[0][2], p4 = marker_corners[0][3];
             g_fixed_aruco_center = Point2f((p1.x + p2.x + p3.x + p4.x) / 4.0f, (p1.y + p2.y + p3.y + p4.y) / 4.0f);
         }
         else
         {
-            std::cout << "\n>>> [ArUco 标定失败] 未找到基准码，请检查画面清晰度或是否被遮挡！" << std::endl;
+            monitor_log << "\n>>> [ArUco 标定失败] 未找到基准码，请检查画面清晰度或是否被遮挡！" << std::endl;
         }
     }
 
@@ -2094,7 +2111,7 @@ void VisionEngine::renderOsd(Mat &raw_frame)
 
 void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
 {
-    cout << ">>> [单帧寻物] 图像就绪，开始 HSV 提取与 PNP (ID=" << task.class_id << ")..." << endl;
+    monitor_log << ">>> [单帧寻物] 图像就绪，开始 HSV 提取与 PNP (ID=" << task.class_id << ")..." << std::endl;
 
     Mat hsv, mask;
     cvtColor(raw_frame, hsv, COLOR_BGR2HSV);
@@ -2203,7 +2220,7 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
 
             float px = arm1_pose.x;
             float py = arm1_pose.y;
-            cout << ">>> [单帧寻物] HSV 外框 PnP 解析成功 | 位于 ARM1_X: " << px << " cm, ARM1_Y: " << py << " cm" << endl;
+            monitor_log << ">>> [单帧寻物] HSV 外框 PnP 解析成功 | 位于 ARM1_X: " << px << " cm, ARM1_Y: " << py << " cm" << std::endl;
 
             // ===== 底盘移动核心解算逻辑 =====
             float target_x = -16.0f;
@@ -2211,7 +2228,7 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
             float forward_cm = target_x - px;
             float right_cm = py - target_y;
 
-            cout << ">>> [底盘调度] 需前进 " << forward_cm << " cm, 需向右 " << right_cm << " cm" << endl;
+            monitor_log << ">>> [底盘调度] 需前进 " << forward_cm << " cm, 需向右 " << right_cm << " cm" << std::endl;
 
             if (g_serial_fd >= 0)
             {
@@ -2239,12 +2256,12 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
         }
         else
         {
-            cout << ">>> [单帧寻物] PnP 矩阵收敛失败！" << endl;
+            monitor_log << ">>> [单帧寻物] PnP 矩阵收敛失败！" << std::endl;
         }
     }
     else
     {
-        cout << ">>> [单帧寻物] 致命：画面中心周围完全没有蓝色目标！" << endl;
+        monitor_log << ">>> [单帧寻物] 致命：画面中心周围完全没有蓝色目标！" << std::endl;
     }
 
     // 无论最终结果如何，看完最后一眼立刻把云台归位到 Nod 的位置
@@ -2253,7 +2270,7 @@ void VisionEngine::handleHsvFindOneshot(const DemoTask &task, Mat &raw_frame)
         char buf[64];
         sprintf(buf, "CAM %.1f %.1f\r\n", g_calibrated_pan, g_calibrated_tilt);
         write(g_serial_fd, buf, strlen(buf));
-        cout << ">>> [单帧寻物] 流程收尾：云台已复位至 Nod (Pan:" << g_calibrated_pan << ", Tilt:" << g_calibrated_tilt << ")" << endl;
+        monitor_log << ">>> [单帧寻物] 流程收尾：云台已复位至 Nod (Pan:" << g_calibrated_pan << ", Tilt:" << g_calibrated_tilt << ")" << std::endl;
     }
 }
 
@@ -2261,7 +2278,7 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
 {
     if (g_cache_091_bbox.area() <= 0)
     {
-        cout << ">>> [视觉闭环] 无效的 DEMO091 缓存框！" << endl;
+        monitor_log << ">>> [视觉闭环] 无效的 DEMO091 缓存框！" << std::endl;
         return;
     }
 
@@ -2363,7 +2380,7 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
     }
 
     int vertical_line_count = valid_lines.size();
-    cout << ">>> [视觉闭环] 扫描右侧边缘，发现独立竖直长线数量: " << vertical_line_count << endl;
+    monitor_log << ">>> [视觉闭环] 扫描右侧边缘，发现独立竖直长线数量: " << vertical_line_count << std::endl;
 
     // 【UI】画出扫描区域的蓝框 (可以看到这比原来的 1/3 框多出了 50 像素)
     rectangle(raw_frame, right_roi, Scalar(255, 255, 0), 2);
@@ -2373,13 +2390,13 @@ void VisionEngine::handleCheck091(Mat &raw_frame)
     {
         g_cache_091_px += 0.5f; // 参数X加0.5
         Pose6D adj_pose = {g_cache_091_px, g_cache_091_py, g_cache_091_pz, 0, 0, 0};
-        cout << ">>> [视觉闭环] 未卡平 (竖线≥2)！下发微调指令 DEMO092 (X=" << g_cache_091_px << ")" << endl;
+        monitor_log << ">>> [视觉闭环] 未卡平 (竖线≥2)！下发微调指令 DEMO092 (X=" << g_cache_091_px << ")" << std::endl;
         pilot_comm.sendDemoCommand("DEMO092", adj_pose);
     }
     else
     {
         Pose6D adj_pose = {g_cache_091_px, g_cache_091_py, g_cache_091_pz, 0, 0, 0};
-        cout << ">>> [视觉闭环] 卡紧完毕 (竖线<2)！触发装配收尾指令 DEMO093" << endl;
+        monitor_log << ">>> [视觉闭环] 卡紧完毕 (竖线<2)！触发装配收尾指令 DEMO093" << std::endl;
         pilot_comm.sendDemoCommand("DEMO093", adj_pose);
     }
 }
@@ -2388,7 +2405,7 @@ void VisionEngine::handleCheck001(Mat &raw_frame)
 {
     if (g_cache_pt1.x < 0)
     {
-        cout << ">>> [视觉闭环] 缺少 DEMO001 的有效1号锚点！" << endl;
+        monitor_log << ">>> [视觉闭环] 缺少 DEMO001 的有效1号锚点！" << std::endl;
         return;
     }
 
@@ -2468,7 +2485,7 @@ void VisionEngine::handleCheck001(Mat &raw_frame)
 
     int vertical_line_count = valid_lines.size();
     rectangle(raw_frame, roi_rect, Scalar(255, 255, 0), 2);
-    cout << ">>> [视觉闭环] DEMO001 侧边扫描，发现独立竖直长线数量: " << vertical_line_count << endl;
+    monitor_log << ">>> [视觉闭环] DEMO001 侧边扫描，发现独立竖直长线数量: " << vertical_line_count << std::endl;
 
     // 临界值为 2
     if (vertical_line_count >= 2)
@@ -2477,13 +2494,13 @@ void VisionEngine::handleCheck001(Mat &raw_frame)
         g_cache_001_px -= 0.5f;
 
         Pose6D adj_pose = {g_cache_001_px, g_cache_001_py, g_cache_001_pz, 0, 0, 0};
-        cout << ">>> [视觉闭环] DEMO001 未卡平！下发微调指令 DEMO001_ADJ (X=" << g_cache_001_px << ")" << endl;
+        monitor_log << ">>> [视觉闭环] DEMO001 未卡平！下发微调指令 DEMO001_ADJ (X=" << g_cache_001_px << ")" << std::endl;
         pilot_comm.sendDemoCommand("DEMO001_ADJ", adj_pose);
     }
     else
     {
         Pose6D adj_pose = {g_cache_001_px, g_cache_001_py, g_cache_001_pz, 0, 0, 0};
-        cout << ">>> [视觉闭环] DEMO001 卡紧完毕！触发收尾指令 DEMO001_DONE" << endl;
+        monitor_log << ">>> [视觉闭环] DEMO001 卡紧完毕！触发收尾指令 DEMO001_DONE" << std::endl;
         pilot_comm.sendDemoCommand("DEMO001_DONE", adj_pose);
     }
 }
@@ -2492,7 +2509,7 @@ void VisionEngine::handleCheck002(Mat &raw_frame)
 {
     if (g_cache_pt1.x < 0)
     {
-        cout << ">>> [视觉闭环] 缺少 DEMO002 的有效1号锚点！" << endl;
+        monitor_log << ">>> [视觉闭环] 缺少 DEMO002 的有效1号锚点！" << std::endl;
         return;
     }
 
@@ -2919,38 +2936,45 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
         {
             // 1. 找出所有点的几何中心
             float cx = 0.0f;
-            for (auto p : pts) cx += p.x;
+            for (auto p : pts)
+                cx += p.x;
             cx /= pts.size();
 
             // 2. 舍弃左半侧，仅保留右半侧的点作为线段候选池
             std::vector<Point2f> right_pts;
-            for (auto p : pts) {
-                if (p.x > cx) right_pts.push_back(p);
+            for (auto p : pts)
+            {
+                if (p.x > cx)
+                    right_pts.push_back(p);
             }
 
             // 3. 遍历右半侧，构造候选线段并根据“横坐标差距”从小到大排序
-            struct PairInfo {
+            struct PairInfo
+            {
                 Point2f p1, p2;
                 float dx;
             };
             std::vector<PairInfo> pairs;
-            for (size_t i = 0; i < right_pts.size(); i++) {
-                for (size_t j = i + 1; j < right_pts.size(); j++) {
+            for (size_t i = 0; i < right_pts.size(); i++)
+            {
+                for (size_t j = i + 1; j < right_pts.size(); j++)
+                {
                     float dy = std::abs(right_pts[i].y - right_pts[j].y);
-                    if (dy < 15.0f) continue; // 必须是近似竖直的线段
+                    if (dy < 15.0f)
+                        continue; // 必须是近似竖直的线段
                     pairs.push_back({right_pts[i], right_pts[j], std::abs(right_pts[i].x - right_pts[j].x)});
                 }
             }
             // 排序：横坐标相差越小的排在越前面
-            std::sort(pairs.begin(), pairs.end(), [](const PairInfo& a, const PairInfo& b) {
-                return a.dx < b.dx;
-            });
+            std::sort(pairs.begin(), pairs.end(), [](const PairInfo &a, const PairInfo &b)
+                      { return a.dx < b.dx; });
 
             std::vector<Point2f> right_col;
             bool found_3_points = false;
 
             // 4. 逐一验证直线，寻找符合条件的基准线
-            for (const auto& pair : pairs) {
+            for (const auto &pair : pairs)
+            {
                 float A = pair.p2.y - pair.p1.y;
                 float B = pair.p1.x - pair.p2.x;
                 float C = pair.p2.x * pair.p1.y - pair.p1.x * pair.p2.y;
@@ -2958,29 +2982,38 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
 
                 std::vector<Point2f> current_line_pts;
                 // 看原图中是否经过(20像素以内就算经过)其他的点
-                for (auto p : pts) {
+                for (auto p : pts)
+                {
                     float dist = std::abs(A * p.x + B * p.y + C) / norm_AB;
-                    if (dist <= 20.0f) {
+                    if (dist <= 20.0f)
+                    {
                         current_line_pts.push_back(p);
                     }
                 }
 
-                if (current_line_pts.size() >= 4) {
+                if (current_line_pts.size() >= 4)
+                {
                     right_col = current_line_pts;
                     break; // 直线上有4个点，没问题，直接跳出使用该线
-                } else if (current_line_pts.size() == 3) {
+                }
+                else if (current_line_pts.size() == 3)
+                {
                     found_3_points = true;
                     break; // 直线上有3个点，记录状态并跳出
-                } else if (current_line_pts.size() <= 2) {
+                }
+                else if (current_line_pts.size() <= 2)
+                {
                     continue; // 只有两个点，舍弃掉，并在下一次循环自动确定横向相差第二小的线
                 }
             }
 
             // --- 特殊分支：视野缺失，小车偏左，需要右移 ---
-            if (found_3_points) {
+            if (found_3_points)
+            {
                 cout << ">>> [视觉对齐] align02 优化：右侧基准线上仅有3个点，视野残缺！直接下发：右移3厘米！" << endl;
                 extern int g_serial_fd;
-                if (g_serial_fd >= 0) {
+                if (g_serial_fd >= 0)
+                {
                     char buf[128];
                     // dy对应小车左右，正值为右移
                     sprintf(buf, "ALIGN_MOVE 0.0 3.0 0.0\r\n");
@@ -2990,29 +3023,40 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
             }
 
             // --- 正常分支：执行基准线补齐逻辑 ---
-            if (!right_col.empty()) {
-                std::sort(right_col.begin(), right_col.end(), [](Point2f a, Point2f b) {
-                    return a.y > b.y; // 降序排列，y值越大越在下方
-                });
-                
+            if (!right_col.empty())
+            {
+                std::sort(right_col.begin(), right_col.end(), [](Point2f a, Point2f b)
+                          {
+                              return a.y > b.y; // 降序排列，y值越大越在下方
+                          });
+
                 P4 = right_col.front(); // 最下方的是 4 号点
                 P7 = right_col.back();  // 最上方的是 7 号点
 
                 // 定义智能左推补点函数 (已移除首轮 80px 限制，完全信任 4 点寻优策略)
-                auto pushLeftSmart = [&](Point2f start_pt) -> Point2f {
+                auto pushLeftSmart = [&](Point2f start_pt) -> Point2f
+                {
                     Point2f cur = start_pt;
-                    Point2f prev_vec(-30.0f, 0.0f); 
-                    bool has_prev_vec = false;      
+                    Point2f prev_vec(-30.0f, 0.0f);
+                    bool has_prev_vec = false;
 
-                    for (int step = 0; step < 3; step++) {
+                    for (int step = 0; step < 3; step++)
+                    {
                         float prev_dist = std::sqrt(prev_vec.x * prev_vec.x + prev_vec.y * prev_vec.y);
                         float prev_angle = std::atan2(prev_vec.y, prev_vec.x) * 180.0f / CV_PI;
 
-                        struct Cand { Point2f pt; float dist; float dy; };
+                        struct Cand
+                        {
+                            Point2f pt;
+                            float dist;
+                            float dy;
+                        };
                         std::vector<Cand> candidates;
 
-                        for (auto p : pts) {
-                            if (p.x >= cur.x - 3.0f) continue; // 必须在左侧
+                        for (auto p : pts)
+                        {
+                            if (p.x >= cur.x - 3.0f)
+                                continue; // 必须在左侧
 
                             Point2f test_vec = p - cur;
                             float test_dist = std::sqrt(test_vec.x * test_vec.x + test_vec.y * test_vec.y);
@@ -3022,20 +3066,25 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
                         Point2f best_pt;
                         float best_dist = 0, best_angle = 0;
                         bool found = false;
-                        if (!candidates.empty()) {
+                        if (!candidates.empty())
+                        {
                             int top_n = std::min((int)candidates.size(), 4);
                             std::partial_sort(candidates.begin(), candidates.begin() + top_n, candidates.end(),
-                                              [](const Cand &a, const Cand &b) { return a.dist < b.dist; });
+                                              [](const Cand &a, const Cand &b)
+                                              { return a.dist < b.dist; });
 
                             float min_dy = 1e9;
                             int best_idx = -1;
-                            for (int i = 0; i < top_n; i++) {
-                                if (candidates[i].dy < min_dy) {
+                            for (int i = 0; i < top_n; i++)
+                            {
+                                if (candidates[i].dy < min_dy)
+                                {
                                     min_dy = candidates[i].dy;
                                     best_idx = i;
                                 }
                             }
-                            if (best_idx >= 0) {
+                            if (best_idx >= 0)
+                            {
                                 best_pt = candidates[best_idx].pt;
                                 best_dist = candidates[best_idx].dist;
                                 Point2f sel_vec = best_pt - cur;
@@ -3045,18 +3094,25 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
                         }
 
                         bool need_fake = false;
-                        if (found && has_prev_vec) {
+                        if (found && has_prev_vec)
+                        {
                             float angle_diff = std::abs(best_angle - prev_angle);
-                            if (angle_diff > 180.0f) angle_diff = 360.0f - angle_diff;
-                            if (angle_diff > 9.0f) need_fake = true;
-                            if (best_dist < prev_dist * 0.8f || best_dist > prev_dist * 1.2f) need_fake = true;
+                            if (angle_diff > 180.0f)
+                                angle_diff = 360.0f - angle_diff;
+                            if (angle_diff > 9.0f)
+                                need_fake = true;
+                            if (best_dist < prev_dist * 0.8f || best_dist > prev_dist * 1.2f)
+                                need_fake = true;
                         }
 
-                        if (found && !need_fake) {
+                        if (found && !need_fake)
+                        {
                             prev_vec = best_pt - cur;
                             cur = best_pt;
                             has_prev_vec = true;
-                        } else {
+                        }
+                        else
+                        {
                             cur = cur + prev_vec; // 新斜率=旧斜率，新长短=旧长短
                         }
                     }
@@ -3071,13 +3127,31 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
         }
 
         // 万能兜底逻辑：如果不是 align02 或者基准线完全寻找失败，退回传统的极限坐标提取
-        if (use_traditional) {
+        if (use_traditional)
+        {
             float min_x_minus_y = 1e9, max_x_plus_y = -1e9, max_x_minus_y = -1e9, min_x_plus_y = 1e9;
-            for (auto p : pts) {
-                if (p.x - p.y < min_x_minus_y) { min_x_minus_y = p.x - p.y; P1 = p; }
-                if (p.x + p.y > max_x_plus_y) { max_x_plus_y = p.x + p.y; P4 = p; }
-                if (p.x - p.y > max_x_minus_y) { max_x_minus_y = p.x - p.y; P7 = p; }
-                if (p.x + p.y < min_x_plus_y) { min_x_plus_y = p.x + p.y; P10 = p; }
+            for (auto p : pts)
+            {
+                if (p.x - p.y < min_x_minus_y)
+                {
+                    min_x_minus_y = p.x - p.y;
+                    P1 = p;
+                }
+                if (p.x + p.y > max_x_plus_y)
+                {
+                    max_x_plus_y = p.x + p.y;
+                    P4 = p;
+                }
+                if (p.x - p.y > max_x_minus_y)
+                {
+                    max_x_minus_y = p.x - p.y;
+                    P7 = p;
+                }
+                if (p.x + p.y < min_x_plus_y)
+                {
+                    min_x_plus_y = p.x + p.y;
+                    P10 = p;
+                }
             }
         }
 
@@ -3354,7 +3428,7 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
                   << std::endl;
 
         // 误差阈值 (align02 放宽 dy 和 tilt)
-        float th_dx = (task.raw_cmd == "align02") ? 3.0f : 3.0f, th_dy = (task.raw_cmd == "align02") ? 3.5f : 2.0f, th_tilt = (task.raw_cmd == "align02") ? 40.0f : 3.0f;
+        float th_dx = (task.raw_cmd == "align02") ? 3.0f : 3.0f, th_dy = (task.raw_cmd == "align02") ? 3.5f : 2.0f, th_tilt = (task.raw_cmd == "align02") ? 5.0f : 3.0f;
         if (std::abs(dx) < th_dx && std::abs(dy) < th_dy && std::abs(tilt_angle) < th_tilt)
         {
             cout << ">>> [视觉对齐] 精度已达标！无需进行底盘调整。" << endl;

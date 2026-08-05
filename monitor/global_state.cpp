@@ -29,6 +29,9 @@ float g_calibrated_pan = -1.0f;
 float g_calibrated_tilt = -1.0f;
 std::atomic<bool> g_hsv_find_running{false};
 
+std::atomic<bool> g_video_stream_on{true}; // 默认开启，兼容原有行为
+std::atomic<int> g_video_quality{60};      // 与旧硬编码质量一致
+
 cv::Rect g_cache_091_bbox(0, 0, 0, 0);
 float g_cache_091_px = 0.0f;
 float g_cache_091_py = 0.0f;
