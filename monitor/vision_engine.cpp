@@ -832,6 +832,11 @@ bool VisionEngine::handleYoloAndPnP(const DemoTask &current_task, Mat &raw_frame
                                     }
                                     else
                                     {
+                                        // 如果推导后的点跑到了 safe_bbox.x 左侧，直接 break 结束推演
+                                        Point2f next_cur = cur + prev_vec;
+                                        if (next_cur.x < safe_crop.x) {
+                                            break;
+                                        }
                                         // 补点：新斜率=旧斜率，新连线长短=旧连线长短
                                         cur = cur + prev_vec;
                                         // prev_vec 保持不变，斜率与长短延续上一轮
@@ -3219,6 +3224,11 @@ void VisionEngine::handleAlign(const DemoTask &task, Mat &raw_frame)
                         }
                         else
                         {
+                            // 如果推导后的点跑到了 safe_bbox.x 左侧，直接 break 结束推演
+                                        Point2f next_cur = cur + prev_vec;
+                                        if (next_cur.x < safe_bbox.x) {
+                                            break;
+                                        }
                             cur = cur + prev_vec; // 新斜率=旧斜率，新长短=旧长短
                         }
                     }
