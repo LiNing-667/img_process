@@ -224,8 +224,10 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         // 直接关节角控制（逻辑角，度）：上位机下发 → monitor 转发 → pilot 平滑移动
         // 格式: JNT <arm_id> <a1> <a2> <a3> <a4> <a5> <a6>
         int arm_id = (int)px;
-        if (arm_id < 0) arm_id = 0;
-        if (arm_id > 1) arm_id = 1;
+        if (arm_id < 0)
+            arm_id = 0;
+        if (arm_id > 1)
+            arm_id = 1;
         std::vector<float> angles = {py, pz, zx, zy, zz, xx};
         std::cout << "\n>>> [Pilot] 直接关节角控制 ARM" << arm_id << ": "
                   << angles[0] << " " << angles[1] << " " << angles[2] << " "
@@ -234,13 +236,21 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         float raw[6];
         if (arm_id == 0)
         {
-            raw[0] = angles[0] + 95.0f;   raw[1] = angles[1] + 120.0f; raw[2] = angles[2] + 110.0f;
-            raw[3] = -angles[3] + 110.0f; raw[4] = (180.0f - angles[4]) + 12.0f; raw[5] = angles[5] + 102.0f;
+            raw[0] = angles[0] + 95.0f;
+            raw[1] = angles[1] + 120.0f;
+            raw[2] = angles[2] + 110.0f;
+            raw[3] = -angles[3] + 110.0f;
+            raw[4] = (180.0f - angles[4]) + 12.0f;
+            raw[5] = angles[5] + 102.0f;
         }
         else
         {
-            raw[0] = angles[0] + 108.0f; raw[1] = angles[1] + 108.0f; raw[2] = angles[2] + 108.0f;
-            raw[3] = -angles[3] + 108.0f; raw[4] = (180.0f - angles[4]) + 18.0f; raw[5] = angles[5] + 51.0f;
+            raw[0] = angles[0] + 108.0f;
+            raw[1] = angles[1] + 108.0f;
+            raw[2] = angles[2] + 108.0f;
+            raw[3] = -angles[3] + 108.0f;
+            raw[4] = (180.0f - angles[4]) + 18.0f;
+            raw[5] = angles[5] + 51.0f;
         }
         std::vector<float> raw_vec(raw, raw + 6);
         g_arm.moveRawChannelsSmooth(arm_id, raw_vec, 1.5f);
