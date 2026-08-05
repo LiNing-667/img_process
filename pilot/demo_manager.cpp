@@ -378,7 +378,7 @@ namespace DemoManager
 
                 g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 3.2f , 9.5f, 0.1f , f_zy, f_zz, f_xx, f_xy, f_xz);
                 g_arm.setServoAngle(1, 15, Arm1_open); usleep(600000);
-                g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 0.2f, 6.0f, 0.1f, f_zy, f_zz, f_xx, f_xy, f_xz);
+                g_arm.moveSmooth(1, px_arm1 + 1.0 , py_arm1 - 2.2f, 6.0f, 0.1f, f_zy, f_zz, f_xx, f_xy, f_xz);
                 g_arm.setServoAngle(1, 15, Arm1_close); 
             
                 //视觉闭环
