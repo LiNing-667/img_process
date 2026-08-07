@@ -513,6 +513,20 @@ void serialReadThreadFunc()
                     t.raw_cmd = "CHASSIS_DONE";
                     task_try_submit(t);
                 }
+                else if (line.rfind("JOINTS", 0) == 0) // 机械臂关节角上报 (Pilot → Monitor → 上位机)
+                {
+                    int arm_id = 0;
+                    float a[6] = {0, 0, 0, 0, 0, 0};
+                    if (sscanf(line.c_str(), "JOINTS %d %f %f %f %f %f %f",
+                               &arm_id, &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) >= 7)
+                    {
+                        monitor_log << "\n[Monitor 接收] 机械臂关节角上报 ARM" << arm_id << ": "
+                                    << a[0] << " " << a[1] << " " << a[2] << " "
+                                    << a[3] << " " << a[4] << " " << a[5] << std::endl;
+                        std::vector<float> angles(a, a + 6);
+                        pc_send_arm_joints((uint8_t)arm_id, angles); // 转发上位机更新 3D 预览
+                    }
+                }
 
                 // 【已有的】拦截以 align 开头的视觉对齐指令
                 else if (line.rfind("align", 0) == 0)

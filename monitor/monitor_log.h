@@ -11,10 +11,15 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 // 向上位机(PC)发送一条下行文本消息 (CMD_DOWNLINK_MSG, 0x82)。
 // 在 network_server.cpp 中实现；PC 未连接时内部自动忽略。
 void pc_send_downlink(const std::string &text);
+
+// 向上位机(PC)上报机械臂关节角 (CMD_ARM_JOINTS, 0x03: arm_id + 1B计数 + N×float)。
+// 供 monitor 收到 Pilot 的 JOINTS 上报后转发，PC 据此更新 3D 预览。
+void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles);
 
 // 流式日志代理：以临时对象形式存在于整条语句内，语句结束时统一输出到终端并转发上位机。
 class MonitorLog
@@ -24,13 +29,6 @@ public:
     MonitorLog &operator<<(const T &v)
     {
         oss_ << v;
-        return *this;
-    }
-
-    // 重载流操纵符（如 std::endl, std::flush）
-    MonitorLog &operator<<(std::ostream &(*manip)(std::ostream &))
-    {
-        // 不传给 stringstream，只在析构时统一加换行
         return *this;
     }
 
