@@ -316,7 +316,6 @@ void pc_send_downlink(const std::string &text)
             break;
         sent += (size_t)n;
     }
-<<<<<<< HEAD
 }
 
 void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
@@ -340,6 +339,23 @@ void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
             break;
         sent += (size_t)n;
     }
-=======
->>>>>>> 48054eab202116b029b4f4fe0fbe76857f6c6632
+}
+
+void pc_send_vehicle_pos(float x, float y, float z, float yaw)
+{
+    if (!pServerImpl)
+        return;
+    int sock = pServerImpl->cmd_sock.load();
+    if (sock < 0)
+        return;
+    auto frame = protocol::build_vehicle_pos(x, y, z, yaw);
+    std::lock_guard<std::mutex> lock(g_downlink_mtx);
+    size_t sent = 0;
+    while (sent < frame.size())
+    {
+        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
+        if (n <= 0)
+            break;
+        sent += (size_t)n;
+    }
 }

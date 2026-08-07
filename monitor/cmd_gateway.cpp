@@ -526,6 +526,16 @@ void serialReadThreadFunc()
                         pc_send_arm_joints((uint8_t)arm_id, angles); // 转发上位机更新 3D 预览
                     }
                 }
+                else if (line.rfind("POS", 0) == 0) // 小车坐标上报 (Pilot → Monitor → 上位机)
+                {
+                    float x = 0, y = 0, yaw = 0;
+                    if (sscanf(line.c_str(), "POS %f %f %f", &x, &y, &yaw) >= 3)
+                    {
+                        monitor_log << "\n[Monitor 接收] 小车坐标上报: X=" << x
+                                    << " Y=" << y << " Yaw=" << yaw << std::endl;
+                        pc_send_vehicle_pos(x, y, 0.0f, yaw); // 转发上位机更新平面坐标图
+                    }
+                }
 
                 // 【已有的】拦截以 align 开头的视觉对齐指令
                 else if (line.rfind("align", 0) == 0)

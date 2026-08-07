@@ -203,7 +203,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     else if (strcmp(cmd, "MOVE") == 0)
     {
         std::cout << "\n>>> [Pilot] 收到全局路径规划目标 -> X:" << px << " Y:" << py << " Yaw:" << pz << std::endl;
-        g_car.planPath(px, py, pz);
+        g_car.planPath(px, py, pz); // 完成后在 planPath 内结算 nav_* 并上报新位置 (POS)
     }
     else if (strcmp(cmd, "ALIGN_MOVE") == 0)
     {
@@ -221,7 +221,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     }
     else if (num == 8 && strcmp(cmd, "JNT") == 0)
     {
-        // 直接关节角控制（逻辑角，度）：上位机下发 → monitor 转发 → pilot 平滑移动
+        // 直接关节角控制（逻辑角，度）：上位机 → monitor 转发 → pilot 直接到位
         // 格式: JNT <arm_id> <a1> <a2> <a3> <a4> <a5> <a6>
         int arm_id = (int)px;
         if (arm_id < 0)
@@ -232,83 +232,21 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         std::cout << "\n>>> [Pilot] 直接关节角控制 ARM" << arm_id << ": "
                   << angles[0] << " " << angles[1] << " " << angles[2] << " "
                   << angles[3] << " " << angles[4] << " " << angles[5] << std::endl;
-        // 逻辑角 → 原始舵机角，平滑移动
-        float raw[6];
-        if (arm_id == 0)
-        {
-            raw[0] = angles[0] + 95.0f;
-            raw[1] = angles[1] + 120.0f;
-            raw[2] = angles[2] + 110.0f;
-            raw[3] = -angles[3] + 110.0f;
-            raw[4] = (180.0f - angles[4]) + 12.0f;
-            raw[5] = angles[5] + 102.0f;
-        }
-        else
-        {
-            raw[0] = angles[0] + 108.0f;
-            raw[1] = angles[1] + 108.0f;
-            raw[2] = angles[2] + 108.0f;
-            raw[3] = -angles[3] + 108.0f;
-            raw[4] = (180.0f - angles[4]) + 18.0f;
-            raw[5] = angles[5] + 51.0f;
-        }
-        std::vector<float> raw_vec(raw, raw + 6);
-        g_arm.moveRawChannelsSmooth(arm_id, raw_vec, 1.5f);
-        // 上报关节角给 monitor → 上位机
-        char rep[96];
-        snprintf(rep, sizeof(rep), "JOINTS %d %.2f %.2f %.2f %.2f %.2f %.2f\r\n",
-                 arm_id, angles[0], angles[1], angles[2], angles[3], angles[4], angles[5]);
-        sendToMonitor(rep);
+        // 逐关节驱动：每个关节走与 CH 一致的标定映射（setChannelDirect）
+        // ARM0 → ch0-5，ARM1 → ch9-14；直接到位，无插值
+        int base = (arm_id == 0) ? 0 : 9;
+        for (int j = 0; j < 6; ++j)
+            g_arm.setChannelDirect(base + j, angles[j]);
+        // 注：JNT 不在此返回 JOINTS 上报，关节角上报统一由 moveSmooth 路径负责
     }
     else if (num >= 3 && strcmp(cmd, "CH") == 0)
     {
         int channel = (int)px;
         if (channel >= 0 && channel <= 15)
         {
-            int target_arm = (channel >= 7) ? 1 : 0;
-            float calibrated_angle = py;
-            if (target_arm == 0)
-            {
-                if (channel == 0)
-                    calibrated_angle = py + 5.0f;
-                else if (channel == 1)
-                    calibrated_angle = py + 30.0f;
-                else if (channel == 2)
-                    calibrated_angle = py + 20.0f;
-                else if (channel == 3)
-                    calibrated_angle = py + 20.0f;
-                else if (channel == 4)
-                    calibrated_angle = py + 12.0f;
-                else if (channel == 5)
-                    calibrated_angle = py + 16.0f; // 13
-            }
-            else if (target_arm == 1)
-            {
-                if (channel == 9)
-                    calibrated_angle = py + 18.0f;
-                else if (channel == 10)
-                    calibrated_angle = py + 18.0f;
-                else if (channel == 11)
-                    calibrated_angle = py + 18.0f;
-                else if (channel == 12)
-                    calibrated_angle = py + 18.0f;
-                else if (channel == 13)
-                    calibrated_angle = py + 18.0f;
-                else if (channel == 14)
-                    calibrated_angle = py - 65.0f;
-                else if (channel == 7)
-                {
-                    calibrated_angle = py;
-                    g_arm.notifyCameraManualSet(7, calibrated_angle);
-                }
-                else if (channel == 8)
-                {
-                    calibrated_angle = py;
-                    g_arm.notifyCameraManualSet(8, calibrated_angle);
-                }
-            }
-            g_arm.setServoAngle(target_arm, channel, calibrated_angle);
-            std::cout << "[Pilot] 收到直控指令 -> " << cmd << " " << channel << " 角度:" << py << " (已映射为:" << calibrated_angle << ")" << std::endl;
+            // 统一走单通道直控函数：内含 CH 标定补偿与云台状态同步
+            g_arm.setChannelDirect(channel, py);
+            std::cout << "[Pilot] 收到直控指令 -> " << cmd << " " << channel << " 角度:" << py << std::endl;
         }
     }
     else if (strcmp(cmd, "MR") == 0)
@@ -331,8 +269,10 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     {
         g_car.moveRelative(px, 0);
         std::cout << "[Pilot] 相对移动 -> 前进 " << px << " cm" << std::endl;
+        g_car.noteForwardMove(px); // 更新命令式位置估计（不依赖里程计）
         std::thread([this, px]()
                     { usleep((int)(std::abs(px) / 15.0f * 1000000) + 500000);
+                      g_car.reportPosition();   // 移动完成后上报新位置
                       sendToMonitor("CMD_DONE\r\n"); })
             .detach();
     }
@@ -340,6 +280,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     {
         g_car.moveRelative(-px, 0);
         std::cout << "[Pilot] 相对移动 -> 后退 " << px << " cm" << std::endl;
+        g_car.noteForwardMove(-px);
         std::thread([this, px]()
                     { usleep((int)(std::abs(px) / 15.0f * 1000000) + 500000);
                       sendToMonitor("CMD_DONE\r\n"); })
@@ -349,6 +290,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     {
         g_car.moveRelative(0, px);
         std::cout << "[Pilot] 相对移动 -> 向右平移 " << px << " cm" << std::endl;
+        g_car.noteRightMove(px);
         std::thread([this, px]()
                     { usleep((int)(std::abs(px) / 15.0f * 1000000) + 500000);
                       sendToMonitor("CMD_DONE\r\n"); })
@@ -358,6 +300,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
     {
         g_car.moveRelative(0, -px);
         std::cout << "[Pilot] 相对移动 -> 向左平移 " << px << " cm" << std::endl;
+        g_car.noteRightMove(-px);
         std::thread([this, px]()
                     { usleep((int)(std::abs(px) / 15.0f * 1000000) + 500000);
                       sendToMonitor("CMD_DONE\r\n"); })
@@ -368,6 +311,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         float deg = (num >= 2) ? px : 90.0f;
         g_car.turnRelative(-deg);
         std::cout << "[Pilot] 车身原地左转 " << deg << " 度" << std::endl;
+        g_car.noteTurn(-deg);
         std::thread([this, deg]()
                     { usleep((int)(std::abs(deg) / 45.0f * 1000000) + 500000);
                       sendToMonitor("CMD_DONE\r\n"); })
@@ -378,6 +322,7 @@ void SerialRouter::dispatchCommand(const std::string &cmd_str)
         float deg = (num >= 2) ? px : 90.0f;
         g_car.turnRelative(deg);
         std::cout << "[Pilot] 车身原地右转 " << deg << " 度" << std::endl;
+        g_car.noteTurn(deg);
         std::thread([this, deg]()
                     { usleep((int)(std::abs(deg) / 45.0f * 1000000) + 500000);
                       sendToMonitor("CMD_DONE\r\n"); })

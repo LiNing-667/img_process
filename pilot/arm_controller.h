@@ -35,6 +35,7 @@ public:
     RoboticArmController(int addr);
     bool init();
     void setServoAngle(int arm_id, uint8_t channel, float angle);
+    void setChannelDirect(int channel, float angle);   // 单通道直控（含 CH 标定补偿 / 云台状态同步）
     void setJointsDirect(int arm_id, const std::vector<float> &angles);
     void moveSmooth(int arm_id, float t_px, float t_py, float t_pz, float t_zx, float t_zy, float t_zz, float t_xx, float t_xy, float t_xz);
     

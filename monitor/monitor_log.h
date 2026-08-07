@@ -21,6 +21,10 @@ void pc_send_downlink(const std::string &text);
 // 供 monitor 收到 Pilot 的 JOINTS 上报后转发，PC 据此更新 3D 预览。
 void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles);
 
+// 向上位机(PC)上报小车坐标 (CMD_VEHICLE_POS, 0x02: 4×float → x,y,z,yaw)。
+// 供 monitor 收到 Pilot 的 POS 上报后转发，PC 据此更新平面坐标图。
+void pc_send_vehicle_pos(float x, float y, float z, float yaw);
+
 // 流式日志代理：以临时对象形式存在于整条语句内，语句结束时统一输出到终端并转发上位机。
 class MonitorLog
 {

@@ -7,6 +7,7 @@
 #include "pilot_global.h"
 #include <iostream>
 #include <cmath>
+#include <cstdio>
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
@@ -91,7 +92,7 @@ void ChassisController::parseEncoder(const std::string &msg)
 
 void ChassisController::pidLoop()
 {
-    float kp_x = 3.0f, kp_y = 3.0f, kp_yaw = 15.0f, ki_yaw = 0.2f, integral_yaw = 0.0f; 
+    float kp_x = 3.0f, kp_y = 3.0f, kp_yaw = 15.0f, ki_yaw = 0.2f, integral_yaw = 0.0f;
     // 使用全局动力配置替换硬编码
     float MIN_POWER = g_dynamics.PID_MIN_POWER;
     float MAX_POWER = g_dynamics.PID_MAX_POWER;
@@ -182,7 +183,7 @@ void ChassisController::pidLoop()
             { return std::max(-max_v, std::min(max_v, v)); };
             target_vx = limit(target_vx, MAX_POWER);
             target_vy = limit(target_vy, MAX_POWER);
-            target_vw = limit(target_vw, 300.0f / K);  //旋转力度
+            target_vw = limit(target_vw, 300.0f / K); // 旋转力度
 
             auto ramp = [](float current, float target, float step)
             {
@@ -316,6 +317,38 @@ void ChassisController::emergencyStop()
     sendCmd("$spd:0,0,0,0#");
     usleep(10000);
     sendCmd("$mtype:1#");
+}
+
+void ChassisController::noteForwardMove(float fwd_cm)
+{
+    // 导航系：yaw=0 车头朝 +Y → 前进方向 = (sin, cos)
+    float rad = nav_yaw_ * M_PI / 180.0f;
+    nav_x_ += fwd_cm * std::sin(rad);
+    nav_y_ += fwd_cm * std::cos(rad);
+}
+
+void ChassisController::noteRightMove(float right_cm)
+{
+    float rad = nav_yaw_ * M_PI / 180.0f;
+    nav_x_ += right_cm * std::cos(rad);
+    nav_y_ -= right_cm * std::sin(rad);
+}
+
+void ChassisController::noteTurn(float deg)
+{
+    nav_yaw_ += deg;
+    while (nav_yaw_ > 180.0f)
+        nav_yaw_ -= 360.0f;
+    while (nav_yaw_ <= -180.0f)
+        nav_yaw_ += 360.0f;
+}
+
+void ChassisController::reportPosition()
+{
+    // 命令式位置估计（不依赖底层里程计），供上位机实时显示
+    char buf[64];
+    snprintf(buf, sizeof(buf), "POS %.2f %.2f %.2f\r\n", nav_x_, nav_y_, nav_yaw_);
+    sendToMonitor(buf);
 }
 
 void ChassisController::setAbsoluteTarget(float x_cm, float y_cm)
@@ -542,6 +575,7 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                     nav_y_ = ty;
                     nav_yaw_ = normalize_yaw(tyaw);
 
+                    reportPosition();                 // 记录并上报 MOVE 完成后的新位置
                     sendToMonitor("CHASSIS_DONE\r\n"); })
         .detach();
 }
