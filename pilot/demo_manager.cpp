@@ -482,8 +482,8 @@ namespace DemoManager
 
                         // 拼ID=2物体
                         //视觉闭环
-                        g_arm.moveSmooth(0, px + 1.5f, py + 8.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
-                        g_arm.moveSmooth(0, px + 1.5f, py + 6.5f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+                        g_arm.moveSmooth(0, px + 0.5f, py + 8.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+                        g_arm.moveSmooth(0, px + 0.5f, py + 6.5f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
                         usleep(1000000);
                         //停止移动，向 Monitor 请求拍照验核
                         std::cout << ">>> [闭环] 右臂就位，请求上位机执行边缘校验..." << std::endl;
@@ -502,7 +502,7 @@ namespace DemoManager
             
             g_arm.moveSmooth(0, px + 0.5f, py + 8.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(500000);
-            g_arm.moveSmooth(0, px + 0.5f, py + 5.8f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px + 0.5f, py + 6.2f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(1000000);
 
             // 执行完微调后，再次呼叫 Monitor
@@ -589,8 +589,8 @@ namespace DemoManager
             g_arm.moveSmooth(1, px_arm1 , py_arm1 - 4.5, 6.0f, -0.08f, f_zy, f_zz, f_xx, f_xy, f_xz);
             // 再拼一个ID=2的物体
             // 视觉闭环
-            g_arm.moveSmooth(0, px + 0.5f, py + 9.0f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
-            g_arm.moveSmooth(0, px + 0.5f, py + 7.5f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px - 0.5f, py + 9.0f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px - 0.5f, py + 5.6f , 7.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(1000000);
             //停止移动，向 Monitor 请求拍照验核
             std::cout << ">>> [闭环] 右臂就位，请求上位机执行边缘校验..." << std::endl;
@@ -607,9 +607,9 @@ namespace DemoManager
 
             std::cout << "\n>>> [DEMO001] 闭环微调执行中..." << std::endl;
             
-            g_arm.moveSmooth(0, px + 0.5f, py + 9.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px - 0.5f, py + 9.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(500000);
-            g_arm.moveSmooth(0, px + 0.5f, py + 7.0f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px - 0.5f, py + 5.6f , pz_arm0_up, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(1500000);
 
             // 执行完微调后，再次呼叫 Monitor
@@ -625,7 +625,7 @@ namespace DemoManager
             float px_arm1 = px + py_arm1_x;  // X 轴标定误差补偿
             float py_arm1 = py + py_arm1_y;  // Y 轴平移厘米，对齐物理空间
 
-            g_arm.moveSmooth(0, px + 0.5f, py + 5.6f , pz_arm0_down-0.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
+            g_arm.moveSmooth(0, px - 0.5f, py + 4.5f , pz_arm0_down-0.5f, f_zx, f_zy, f_zz, f_xx, f_xy, f_xz); 
             usleep(1000000);
 
             g_arm.setServoAngle(0, 6, Arm0_open); usleep(1500000); // 组装压实后，松开爪子

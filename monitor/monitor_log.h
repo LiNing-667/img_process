@@ -32,6 +32,12 @@ public:
         return *this;
     }
 
+    // 重载流操纵符（如 std::endl）
+    MonitorLog &operator<<(std::ostream &(*manip)(std::ostream &))
+    {
+        return *this;
+    }
+
     ~MonitorLog()
     {
         std::string s = oss_.str();

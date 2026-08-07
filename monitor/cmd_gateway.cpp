@@ -342,9 +342,11 @@ void processTextCommand(const std::string &cmd_line)
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼3
-            move_car(65, 45, 0);
+            move_car(63, 47, 0);
             auto_align_loop("align93");
             do_vision_demo(0, 0, 2, "DEMO002");
+
+            move_car(63, 20, 0);
             ////抓连接件2
             //move_car(-25, 55, -90);          
             //auto_align_loop("align01");
