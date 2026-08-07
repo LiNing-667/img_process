@@ -3,6 +3,7 @@
  * @brief 指令网关与接收线程 (这是系统的心脏，负责接收终端输入、解析 Pilot 回传，并转化为 g_demo_task) (包含了写定的工作流)
  */
 #include "cmd_gateway.h"
+#include "config.h"
 #include "global_state.h"
 #include "monitor_log.h"
 #include <iostream>
@@ -95,8 +96,8 @@ void processTextCommand(const std::string &cmd_line)
     if (lower_cmd == "nod")
     {
         g_auto_cam_running = true;
-        g_cam_pan = 45.0f;
-        g_cam_tilt = 50.0f;
+        g_cam_pan = CAM_DEFAULT_PAN;
+        g_cam_tilt = CAM_DEFAULT_TILT;
         if (g_serial_fd >= 0)
         {
             char buf[64];
@@ -118,13 +119,13 @@ void processTextCommand(const std::string &cmd_line)
                     {
             // 1. 获取 Nod 记忆角度 (如果没 Nod 过，给个默认兜底)
             if (g_calibrated_pan < 0 || g_calibrated_tilt < 0) {
-                g_calibrated_pan = 45.0f; g_calibrated_tilt = 45.0f;
+                g_calibrated_pan = CAM_DEFAULT_PAN; g_calibrated_tilt = CAM_DEFAULT_TILT;
             }
 
-            // 2. 摄像头转到特定姿态 (水平维持 nod，向下绝对角度 30 度)
+            // 2. 摄像头转到特定姿态 (水平维持 nod，CH8 相对抬高)
             if (g_serial_fd >= 0) {
                 char buf[64];
-                sprintf(buf, "CAM %.1f 30.0\r\n", g_calibrated_pan);
+                sprintf(buf, "CAM %.1f %.1f\r\n", g_calibrated_pan, CAM_DEFAULT_TILT - CAM_FIND_TILT_OFFSET);
                 write(g_serial_fd, buf, strlen(buf));
             }
 
@@ -246,7 +247,7 @@ void processTextCommand(const std::string &cmd_line)
                 extern bool g_reset_align_memory;
                 
                 g_reset_align_memory = true;
-                int max_retry = 7; 
+                int max_retry = 70; 
 
                 while(max_retry-- > 0) {
                     // 【核心修改】：在每次发起微调之前，允许瞬间挂起
@@ -325,11 +326,11 @@ void processTextCommand(const std::string &cmd_line)
             do_vision_demo(0, 9, 1, "DEMO091");
             do_031_sequence();
             //抓墙1
-            move_car(0, 100, 0);
+            move_car(5, 100, 0);
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼2
-            move_car(25, 75, 90);
+            move_car(25, 78, 90);
             auto_align_loop("align92");
             do_vision_demo(0, 0, 1, "DEMO001");
             //抓角柱1
@@ -341,22 +342,24 @@ void processTextCommand(const std::string &cmd_line)
             auto_align_loop("align03");
             do_vision_demo(0, 2, 1, "DEMO021");
             //拼3
-            move_car(40, 30, 0);
+            move_car(63, 47, 0);
             auto_align_loop("align93");
             do_vision_demo(0, 0, 2, "DEMO002");
-            //抓连接件2
-            move_car(-25, 55, -90);          
-            auto_align_loop("align01");
-            do_vision_demo(1, 3, 1, "DEMO131");
-            //抓底座2
-            move_car(-25, 90, -90);  
-            auto_align_loop("align02");
-            do_vision_demo(0, 0, 0, "DEMO000");
-            usleep(1500000);
-            //拼1
-            move_car(50, 30, 0);
-            auto_align_loop("align91");
-            do_vision_demo(0, 9, 1, "DEMO091");
+
+            move_car(63, 20, 0);
+            ////抓连接件2
+            //move_car(-25, 55, -90);          
+            //auto_align_loop("align01");
+            //do_vision_demo(1, 3, 1, "DEMO131");
+            ////抓底座2
+            //move_car(-25, 90, -90);  
+            //auto_align_loop("align02");
+            //do_vision_demo(0, 0, 0, "DEMO000");
+            //usleep(1500000);
+            ////拼1
+            //move_car(50, 30, 0);
+            //auto_align_loop("align91");
+            //do_vision_demo(0, 9, 1, "DEMO091");
             //差不多了......
 
             monitor_log << ">>> 动作链结束！" << std::endl; })

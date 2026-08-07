@@ -540,14 +540,24 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
 
                                 if (dx_local > 0)
                                 {
+                                    // 动作：车体向右侧平移
+                                    // TODO: 微调【向右转】的角度 (例如改为 92.0f)
                                     turn_wait(90.0f, g_dynamics.PLAN_TURN_SPEED);
+                                    
                                     move_wait(dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                                    
+                                    // TODO: 微调【向左转回正】的角度 (例如改为 -91.5f)
                                     turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
                                 }
                                 else
                                 {
+                                    // 动作：车体向左侧平移
+                                    // TODO: 微调【向左转】的角度 (例如改为 -91.5f)
                                     turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
+                                    
                                     move_wait(-dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                                    
+                                    // TODO: 微调【向右转回正】的角度 (例如改为 92.0f)
                                     turn_wait(90.0f, g_dynamics.PLAN_TURN_SPEED);
                                 }
 
@@ -565,9 +575,24 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                     else if (std::abs(dyaw) > 89.0f && std::abs(dyaw) < 91.0f)
                     {
                         move_wait(dy_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
-                        turn_wait(dyaw, g_dynamics.PLAN_TURN_SPEED);
-                        float move_after = (dyaw > 0) ? dx_local : -dx_local;
-                        move_wait(move_after, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                        
+                        // ----------------【修改区域：最终姿态的转向分离】----------------
+                        if (dyaw > 0) 
+                        {
+                            // 最终姿态需要向右转 90 度
+                            // TODO: 微调【向右转】的角度 (例如改为 92.0f)
+                            turn_wait(92.0f, g_dynamics.PLAN_TURN_SPEED);
+                            move_wait(dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED);
+                        } 
+                        else 
+                        {
+                            // 最终姿态需要向左转 90 度
+                            // TODO: 微调【向左转】的角度 (例如改为 -91.5f)
+                            turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
+                            // 注意这里的 dx_local 也是负数，取负后变正，向前推进
+                            move_wait(-dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED); 
+                        }
+                        // --------------------------------------------------------------
                     }
 
                     // 终点状态结算
