@@ -310,7 +310,7 @@ bool findWallCorners(const Mat &roi_frame, std::vector<Point2f> &ordered_corners
         }
         else
         {
-            inRange(hsv, Scalar(90, 100, 130), Scalar(124, 255, 255), mask);
+            inRange(hsv, Scalar(90, 100, 130), Scalar(124, 255, 255), mask); // HSV 颜色提取阈值
         }
 
         Mat open_kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 4));
@@ -319,10 +319,10 @@ bool findWallCorners(const Mat &roi_frame, std::vector<Point2f> &ordered_corners
         morphologyEx(mask, mask, MORPH_CLOSE, close_kernel);
 
         Mat outer_edges;
-        Canny(mask, outer_edges, 30, 120);
+        Canny(mask, outer_edges, 30, 120); //外轮廓边缘
 
         Mat raw_edges;
-        Canny(blurred, raw_edges, 30, 100);
+        Canny(blurred, raw_edges, 20, 80); //内部纹理/横线
 
         Mat internal_zone;
         Mat erode_kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
@@ -395,39 +395,109 @@ bool findWallCorners(const Mat &roi_frame, std::vector<Point2f> &ordered_corners
     if (contours.empty())
         return false;
 
-    double max_size = 0;
     vector<Point> target_contour;
 
-    for (size_t i = 0; i < contours.size(); i++)
+    // ============================================================================
+    // 【新增】：针对 ID=2 (align03 / demo021) 的“最大宽度且内部无长横线”专属过滤逻辑
+    // ============================================================================
+    if (class_id == 2)
     {
-        bool has_inner_box = false;
+        // 1. 将所有轮廓按照其外接矩形的“宽度”从大到小排序
+        std::vector<std::vector<Point>> sorted_contours = contours;
+        std::sort(sorted_contours.begin(), sorted_contours.end(), [](const std::vector<Point>& a, const std::vector<Point>& b) {
+            return boundingRect(a).width > boundingRect(b).width;
+        });
 
-        if ((class_id >= 1 && class_id <= 3) || class_id == 9)
+        // 提取原图的高灵敏度内部边缘（用于检测内部横线）
+        Mat internal_canny;
+        Canny(blurred, internal_canny, 20, 80); 
+
+        for (const auto& c : sorted_contours)
         {
-            int child_idx = hierarchy[i][2];
-            while (child_idx != -1)
+            Rect bbox = boundingRect(c);
+            if (bbox.width < roi_frame.cols * 0.1) continue; // 忽略宽度太小的噪点
+
+            // 2. 将当前多边形绘制成实心的掩码
+            Mat contour_mask = Mat::zeros(edges.size(), CV_8UC1);
+            drawContours(contour_mask, std::vector<std::vector<Point>>{c}, 0, Scalar(255), FILLED);
+
+            // 3. 核心防御：向内腐蚀 5 像素，确保等下检测出来的横线是在“肚子”里，
+            // 而不是它自身的顶边或底边！
+            Mat shrink_kernel = getStructuringElement(MORPH_RECT, Size(5, 5));
+            erode(contour_mask, contour_mask, shrink_kernel);
+
+            // 4. 截取出该多边形内部的纹理边缘
+            Mat inside_edges;
+            bitwise_and(internal_canny, contour_mask, inside_edges);
+
+            // 5. 霍夫变换寻找线段 (最短匹配阈值为多边形宽度的40%)
+            std::vector<Vec4i> lines;
+            HoughLinesP(inside_edges, lines, 1, CV_PI / 180, 15, bbox.width * 0.4, 10);
+
+            bool has_long_horiz_line = false;
+            for (const auto& l : lines)
             {
-                if (boundingRect(contours[child_idx]).area() > 50)
+                float dx = std::abs(l[2] - l[0]);
+                float dy = std::abs(l[3] - l[1]);
+                float len = std::sqrt(dx * dx + dy * dy);
+
+                // 如果是近似横向 (dx > dy)，且长度超过多边形总宽度的 60%
+                if (dx > dy && len > bbox.width * 0.6f)
                 {
-                    has_inner_box = true;
+                    has_long_horiz_line = true;
                     break;
                 }
-                child_idx = hierarchy[child_idx][0];
+            }
+
+            // 只要没踩中“长横线”这颗雷，由于一开始已经按宽度排过序，这绝对是我们要找的！
+            if (!has_long_horiz_line)
+            {
+                target_contour = c;
+                cout << ">>> [极致筛选] ID=2 | 锁定宽度为 " << bbox.width << " px 且内部纯净的多边形！" << endl;
+                break;
             }
         }
-
-        if (has_inner_box)
-            continue;
-
-        double size = boundingRect(contours[i]).area();
-        if (size > max_size)
+    }
+    else
+    {
+        // --- 传统的按面积且无内框筛选兜底逻辑 (适用于 ID=1, 3, 9 等其他任务) ---
+        double max_size = 0;
+        for (size_t i = 0; i < contours.size(); i++)
         {
-            max_size = size;
-            target_contour = contours[i];
+            bool has_inner_box = false;
+
+            if ((class_id >= 1 && class_id <= 3) || class_id == 9)
+            {
+                int child_idx = hierarchy[i][2];
+                while (child_idx != -1)
+                {
+                    if (boundingRect(contours[child_idx]).area() > 50)
+                    {
+                        has_inner_box = true;
+                        break;
+                    }
+                    child_idx = hierarchy[child_idx][0];
+                }
+            }
+
+            if (has_inner_box)
+                continue;
+
+            double size = boundingRect(contours[i]).area();
+            if (size > max_size)
+            {
+                max_size = size;
+                target_contour = contours[i];
+            }
+        }
+        
+        // 其他类的过滤标准保留原来的面积判断
+        if (!target_contour.empty() && max_size < roi_frame.cols * roi_frame.rows * 0.1) {
+            target_contour.clear();
         }
     }
 
-    if (target_contour.empty() || max_size < roi_frame.cols * roi_frame.rows * 0.1)
+    if (target_contour.empty())
         return false;
 
     Point2f tl = target_contour[0], tr = target_contour[0], br = target_contour[0], bl = target_contour[0];
