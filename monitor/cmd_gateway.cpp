@@ -114,30 +114,22 @@ void processTextCommand(const std::string &cmd_line)
         int target_id = lower_cmd[4] - '0';
         monitor_log << "\n>>> [状态机] 启动单帧寻物流 (锁定ID=" << target_id << ")..." << std::endl;
 
-        // 开启独立线程，专门用来等云台到位，绝对不卡死主图像管线
         std::thread([target_id]()
                     {
-            // 1. 获取 Nod 记忆角度 (如果没 Nod 过，给个默认兜底)
             if (g_calibrated_pan < 0 || g_calibrated_tilt < 0) {
                 g_calibrated_pan = CAM_DEFAULT_PAN; g_calibrated_tilt = CAM_DEFAULT_TILT;
             }
-
-            // 2. 摄像头转到特定姿态 (水平维持 nod，CH8 相对抬高)
             if (g_serial_fd >= 0) {
                 char buf[64];
                 sprintf(buf, "CAM %.1f %.1f\r\n", g_calibrated_pan, CAM_DEFAULT_TILT - CAM_FIND_TILT_OFFSET);
                 write(g_serial_fd, buf, strlen(buf));
             }
-
-            // 3. 闭眼等待云台转动及画面完全稳定
             usleep(1500000); 
-
-            // 4. 下发单帧视觉处理任务给 VisionEngine (任务槽忙则放弃本次)
             {
                 DemoTask t;
                 t.raw_cmd = "HSV_FIND_ONESHOT";
-                t.class_id = target_id; // 传递 x 的 ID 给 PNP
-                t.arm_id = 1;           // 强制在 ARM1 参考系下结算
+                t.class_id = target_id;
+                t.arm_id = 1;
                 if (!task_try_submit(t))
                     monitor_log << "  ⚠ [find" << target_id << "] 视觉任务槽忙，本次寻物流已放弃" << std::endl;
             } })
@@ -145,22 +137,25 @@ void processTextCommand(const std::string &cmd_line)
         return;
     }
 
-    if (lower_cmd == "start")
+    // ==========================================================
+    // start / start1 / start2 / start3 工作链入口
+    // ==========================================================
+    if (lower_cmd == "start" || lower_cmd == "start1" || lower_cmd == "start2" || lower_cmd == "start3" || lower_cmd == "start4" || lower_cmd == "start5" || lower_cmd == "start6")
     {
-        std::thread([]()
+        std::string chain_name = lower_cmd;
+        std::thread([chain_name]()
                     {
             monitor_log << "\n=============================================" << std::endl;
-            monitor_log << ">>> 全自动装配宏动作链启动 (主调度流)" << std::endl;
+            monitor_log << ">>> [" << chain_name << "] 全自动装配宏动作链启动" << std::endl;
             monitor_log << "=============================================\n" << std::endl;
 
-            // 每次启动全新的 start 时，确保不处于暂停状态
             g_macro_paused = false;
 
-            // ---- 具备实时挂起能力的事件驱动等待器 ----
+            // ====== 公共辅助函数（每个工作链都可用） ======
+
             auto wait_demo = [](int timeout_ms = 350000, const std::string& step_name = "机械臂动作") {
                 g_wf_demo_done = false;
                 while (!g_wf_demo_done && timeout_ms > 0) { 
-                    // 【核心修改】：在等待的每一帧都进行护栏探测，实现瞬间冻结
                     checkMacroPausePoint("等待 " + step_name + " 完成"); 
                     usleep(50000); 
                     timeout_ms -= 50; 
@@ -188,7 +183,6 @@ void processTextCommand(const std::string &cmd_line)
                 if (timeout_ms <= 0) monitor_log << "  ⚠ [超时] 底盘未在时限内到达！" << std::endl;
             };
 
-            // 【新增】：用于替代剧本中所有 raw usleep() 的可打断延时器
             auto macro_delay = [](int delay_us, const std::string& step_name = "流程间延时") {
                 while (delay_us > 0) {
                     checkMacroPausePoint(step_name);
@@ -217,7 +211,7 @@ void processTextCommand(const std::string &cmd_line)
                     t.class_id = class_id;
                     t.action_id = action_id;
                     t.raw_cmd = cmd;
-                    task_force_submit(t); // 主流水线：强制占用任务槽
+                    task_force_submit(t);
                 }
                 wait_demo(350000, "视觉任务 " + cmd);
             };
@@ -250,7 +244,6 @@ void processTextCommand(const std::string &cmd_line)
                 int max_retry = 70; 
 
                 while(max_retry-- > 0) {
-                    // 【核心修改】：在每次发起微调之前，允许瞬间挂起
                     checkMacroPausePoint("准备下发对齐循环: " + align_cmd);
 
                     g_wf_align_done = false;
@@ -259,12 +252,11 @@ void processTextCommand(const std::string &cmd_line)
                     {
                         DemoTask t;
                         t.raw_cmd = align_cmd;
-                        task_force_submit(t); // 主流水线：强制占用任务槽
+                        task_force_submit(t);
                     }
                     
                     int timeout = 15000; 
                     while(!g_wf_align_done && !g_wf_align_success && timeout > 0) {
-                        // 【核心修改】：在等待底盘调整的过程中，允许瞬间挂起
                         checkMacroPausePoint("等待对齐底层反馈: " + align_cmd);
                         usleep(50000);
                         timeout -= 50;
@@ -278,7 +270,6 @@ void processTextCommand(const std::string &cmd_line)
                     if (g_wf_align_done) {
                         monitor_log << ">>> [动作链] 动作完成 (收到 A 信号)，等待 1.5 秒画面稳定后重试..." << std::endl;
                         
-                        // 【核心修改】：把不可打断的 usleep(2500000) 换成支持暂停的轮询
                         int wait_stable = 2500000;
                         while(wait_stable > 0) {
                             checkMacroPausePoint("对齐后画面冷却缓冲: " + align_cmd);
@@ -292,77 +283,198 @@ void processTextCommand(const std::string &cmd_line)
                 }
             };
 
-            //=======================================================
-            // 动作链正式开始编排：像写剧本一样写在这里
-            //=======================================================
-            
-            // 示例剧本：
-            
-            // 1. 出发去 X=10cm, Y=20cm, 车头朝右转90度
-            // path_plan(10, 20, 90); 
-            // do_vision_demo(0, 0, 0, "DEMO000", 20000);
-            
-            // 2. 去右上方接应另一个物体，保持朝右
-            // path_plan(30, 20, 90); 
-            // do_vision_demo(1, 3, 1, "DEMO131", 15000);
-            
-            // 3. 倒车退回原点，车头依然朝向正前
-            // path_plan(0, 0, 0);
+            // ================== 根据工作链名称分发步骤序列 ==================
 
-            // ================== 请在下方自由编写 ==================
+            if (chain_name == "start")
+            {
+                send_raw("MR");
+                //抓连接件1
+                move_car(-30, 60, -90);          
+                auto_align_loop("align01");
+                do_vision_demo(1, 3, 1, "DEMO131");
+                //抓底座1
+                move_car(-20, 120, -90);  
+                auto_align_loop("align02");
+                do_vision_demo(0, 0, 0, "DEMO000");
+                //拼1
+                move_car(35, 120, 90);
+                auto_align_loop("align91");
+                do_vision_demo(0, 9, 1, "DEMO091");
+                do_031_sequence();
+                //抓墙1
+                move_car(5, 140, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼2
+                move_car(30, 110, 90);
+                auto_align_loop("align92");
+                do_vision_demo(0, 0, 1, "DEMO001");
+                //抓角柱1
+                move_car(-35, 25, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 140, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(55, 90, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
 
-            send_raw("MR");
-            //抓连接件1
-            move_car(-25, 45, -90);          
-            auto_align_loop("align01");
-            do_vision_demo(1, 3, 1, "DEMO131");
-            //抓底座1
-            move_car(-10, 90, -90);  
-            auto_align_loop("align02");
-            do_vision_demo(0, 0, 0, "DEMO000");
-            //拼1
-            move_car(25, 90, 90);
-            auto_align_loop("align91");
-            do_vision_demo(0, 9, 1, "DEMO091");
-            do_031_sequence();
-            //抓墙1
-            move_car(5, 100, 0);
-            auto_align_loop("align03");
-            do_vision_demo(0, 2, 1, "DEMO021");
-            //拼2
-            move_car(25, 78, 90);
-            auto_align_loop("align92");
-            do_vision_demo(0, 0, 1, "DEMO001");
-            //抓角柱1
-            move_car(-25, 10, -90);
-            auto_align_loop("align04");
-            do_vision_demo(1, 1, 1, "DEMO111");
-            //抓墙2
-            move_car(-5, 100, 0);
-            auto_align_loop("align03");
-            do_vision_demo(0, 2, 1, "DEMO021");
-            //拼3
-            move_car(63, 47, 0);
-            auto_align_loop("align93");
-            do_vision_demo(0, 0, 2, "DEMO002");
+                move_car(63, 20, 0);
+            }
+            else if (chain_name == "start1")
+            {
+                // ================== start1 步骤序列（请在下方自由编写） ==================
+                
+                auto_align_loop("align91");
+                do_vision_demo(0, 9, 1, "DEMO091");
+                do_031_sequence();
+                //抓墙1
+                move_car(5, 140, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼2
+                move_car(30, 110, 90);
+                auto_align_loop("align92");
+                do_vision_demo(0, 0, 1, "DEMO001");
+                //抓角柱1
+                move_car(-25, 25, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 150, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(55, 60, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
 
-            move_car(63, 20, 0);
-            ////抓连接件2
-            //move_car(-25, 55, -90);          
-            //auto_align_loop("align01");
-            //do_vision_demo(1, 3, 1, "DEMO131");
-            ////抓底座2
-            //move_car(-25, 90, -90);  
-            //auto_align_loop("align02");
-            //do_vision_demo(0, 0, 0, "DEMO000");
-            //usleep(1500000);
-            ////拼1
-            //move_car(50, 30, 0);
-            //auto_align_loop("align91");
-            //do_vision_demo(0, 9, 1, "DEMO091");
-            //差不多了......
+                move_car(63, 20, 0);
 
-            monitor_log << ">>> 动作链结束！" << std::endl; })
+            }
+            else if (chain_name == "start2")
+            {
+                // ================== start2 步骤序列（请在下方自由编写） ==================
+                
+                auto_align_loop("align92");
+                do_vision_demo(0, 0, 1, "DEMO001");
+                //抓角柱1
+                move_car(-25, 25, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 140, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(55, 90, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
+
+                move_car(63, 20, 0);
+
+
+            }
+            else if (chain_name == "start3")
+            {
+                // ================== start3 步骤序列（请在下方自由编写） ==================
+                
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
+
+                move_car(63, 20, 0);
+
+            }
+            else if (chain_name == "start4")
+            {
+                // ================== start4 步骤序列（请在下方自由编写） ==================
+
+                //抓连接件1
+                move_car(-25, 45, -90);          
+                auto_align_loop("align01");
+                do_vision_demo(1, 3, 1, "DEMO131");
+                //抓底座1
+                move_car(-10, 90, -90);  
+                auto_align_loop("align02");
+                do_vision_demo(0, 0, 0, "DEMO000");
+                auto_align_loop("align91");
+                do_vision_demo(0, 9, 1, "DEMO091");
+                do_031_sequence();
+                //抓墙1
+                move_car(5, 110, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼2
+                move_car(25, 78, 90);
+                auto_align_loop("align92");
+                do_vision_demo(0, 0, 1, "DEMO001");
+                //抓角柱1
+                move_car(-25, 10, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 110, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(63, 47, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
+
+                move_car(63, 20, 0);
+
+            }
+            else if (chain_name == "start5")
+            {
+                // ================== start1 步骤序列（请在下方自由编写） ==================
+                
+                //抓墙1
+                move_car(5, 100, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼2
+                move_car(25, 78, 90);
+                auto_align_loop("align92");
+                do_vision_demo(0, 0, 1, "DEMO001");
+                //抓角柱1
+                move_car(-25, 10, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 100, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(63, 47, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
+
+                move_car(63, 20, 0);
+
+            }
+            else if (chain_name == "start6")
+            {
+                //抓角柱1
+                move_car(-35, 25, -90);
+                auto_align_loop("align04");
+                do_vision_demo(1, 1, 1, "DEMO111");
+                //抓墙2
+                move_car(-5, 140, 0);
+                auto_align_loop("align03");
+                do_vision_demo(0, 2, 1, "DEMO021");
+                //拼3
+                move_car(55, 90, 0);
+                auto_align_loop("align93");
+                do_vision_demo(0, 0, 2, "DEMO002");
+
+                move_car(63, 20, 0);
+
+            }
+
+            monitor_log << ">>> [" << chain_name << "] 动作链结束！" << std::endl; })
             .detach();
         return;
     }

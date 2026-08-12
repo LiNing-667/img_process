@@ -14,15 +14,15 @@
 struct ChassisDynamicsConfig
 {
     // 1. 底层 PID 动力参数限制
-    float PID_MIN_POWER = 200.0f; // 克服静摩擦的最小 PWM/速度 (起步死区)
-    float PID_MAX_POWER = 400.0f; // 输出上限
+    float PID_MIN_POWER = 319.0f; // 克服静摩擦的最小 PWM/速度 (起步死区)
+    float PID_MAX_POWER = 450.0f; // 输出上限
     float RAMP_STEP_X = 15.0f;    // 前后加速度斜率
     float RAMP_STEP_Y = 8.0f;     // 左右加速度斜率 (防侧滑)
     float RAMP_STEP_YAW = 15.0f;  // 旋转加速度斜率
 
     // 2. 开环基础动力指令值 (对应发送给下位机的速度设定)
-    float CMD_SPEED_BASE = 300.0f; // 主要平移动力 (Align和PlanPath使用)
-    float CMD_KICK_SPEED = 300.0f; // 短距离微动补偿动力 (moveRelative使用)
+    float CMD_SPEED_BASE = 320.0f; // 主要平移动力 (Align和PlanPath使用)
+    float CMD_KICK_SPEED = 320.0f; // 短距离微动补偿动力 (moveRelative使用)
 
     // 3. 物理速度映射标定 (时间估算核心！)
     // 公式：行驶时间 = 距离 / (对应的_CM_PER_SEC)

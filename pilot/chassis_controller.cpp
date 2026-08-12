@@ -588,7 +588,7 @@ void ChassisController::planPath(float tx, float ty, float tyaw)
                         {
                             // 最终姿态需要向左转 90 度
                             // TODO: 微调【向左转】的角度 (例如改为 -91.5f)
-                            turn_wait(-90.0f, g_dynamics.PLAN_TURN_SPEED);
+                            turn_wait(-88.0f, g_dynamics.PLAN_TURN_SPEED);
                             // 注意这里的 dx_local 也是负数，取负后变正，向前推进
                             move_wait(-dx_local, 0.0f, g_dynamics.PLAN_MOVE_SPEED); 
                         }

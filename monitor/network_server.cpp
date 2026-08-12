@@ -77,6 +77,15 @@ public:
     std::atomic<int> cmd_sock{-1};
     std::atomic<int> video_sock{-1};
 
+    // 给已接受的连接 socket 设置发送超时：断联/对端不读时 send 返回 -1，而不是无限阻塞
+    static void setSendTimeout(int sock, int sec = 1)
+    {
+        struct timeval tv;
+        tv.tv_sec = sec;
+        tv.tv_usec = 0;
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+
     int createServer(int port)
     {
         int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -98,6 +107,7 @@ public:
             int client = accept(cmd_server_fd, nullptr, nullptr);
             if (client >= 0)
             {
+                setSendTimeout(client); // 断联时 send 不再无限阻塞
                 if (cmd_sock >= 0)
                     close(cmd_sock);
                 cmd_sock = client;
@@ -114,6 +124,7 @@ public:
             int client = accept(video_server_fd, nullptr, nullptr);
             if (client >= 0)
             {
+                setSendTimeout(client, 2); // 图传帧大，超时放宽到 2s
                 int old_sock = video_sock.exchange(client);
                 if (old_sock >= 0)
                     close(old_sock);
@@ -299,6 +310,30 @@ void PcProtocolServer::sendVideo(const cv::Mat &frame)
 // ==========================================================
 static std::mutex g_downlink_mtx;
 
+// 完整发送一帧；失败（断联/超时）返回 false，由调用方负责清理 socket
+static bool sendFrameAll(int sock, const std::vector<uint8_t> &frame)
+{
+    size_t sent = 0;
+    while (sent < frame.size())
+    {
+        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
+        if (n <= 0)
+            return false;
+        sent += (size_t)n;
+    }
+    return true;
+}
+
+// 发送失败时关闭 socket 并清除全局句柄，避免死连接被反复重试
+static void dropCmdSocket(int sock)
+{
+    if (sock < 0)
+        return;
+    close(sock);
+    if (pServerImpl && pServerImpl->cmd_sock == sock)
+        pServerImpl->cmd_sock = -1;
+}
+
 void pc_send_downlink(const std::string &text)
 {
     if (!pServerImpl)
@@ -308,14 +343,8 @@ void pc_send_downlink(const std::string &text)
         return;
     auto frame = protocol::build_downlink_msg(text.c_str());
     std::lock_guard<std::mutex> lock(g_downlink_mtx);
-    size_t sent = 0;
-    while (sent < frame.size())
-    {
-        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
-        if (n <= 0)
-            break;
-        sent += (size_t)n;
-    }
+    if (!sendFrameAll(sock, frame))
+        dropCmdSocket(sock);
 }
 
 void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
@@ -331,14 +360,8 @@ void pc_send_arm_joints(uint8_t arm_id, const std::vector<float> &angles)
         a[i] = angles[i];
     auto frame = protocol::build_arm_joints_arm(arm_id, a.data(), 6);
     std::lock_guard<std::mutex> lock(g_downlink_mtx);
-    size_t sent = 0;
-    while (sent < frame.size())
-    {
-        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
-        if (n <= 0)
-            break;
-        sent += (size_t)n;
-    }
+    if (!sendFrameAll(sock, frame))
+        dropCmdSocket(sock);
 }
 
 void pc_send_vehicle_pos(float x, float y, float z, float yaw)
@@ -350,12 +373,6 @@ void pc_send_vehicle_pos(float x, float y, float z, float yaw)
         return;
     auto frame = protocol::build_vehicle_pos(x, y, z, yaw);
     std::lock_guard<std::mutex> lock(g_downlink_mtx);
-    size_t sent = 0;
-    while (sent < frame.size())
-    {
-        ssize_t n = send(sock, frame.data() + sent, frame.size() - sent, MSG_NOSIGNAL);
-        if (n <= 0)
-            break;
-        sent += (size_t)n;
-    }
+    if (!sendFrameAll(sock, frame))
+        dropCmdSocket(sock);
 }
