@@ -8,6 +8,10 @@
 #include "monitor_log.h"
 #include <iostream>
 #include <mutex>
+#include <fstream>
+#include <sstream>
+#include <cstdio>
+#include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -21,7 +25,7 @@
 using namespace std;
 using namespace cv;
 
-HttpStreamServer::HttpStreamServer(int port)
+HttpStreamServer::HttpStreamServer(int port) : port_(port)
 {
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
@@ -39,19 +43,299 @@ HttpStreamServer::HttpStreamServer(int port)
     monitor_log << "[Monitor] 视觉推流就绪。浏览器访问: http://[本板IP]:" << port << std::endl;
 }
 
+// 非阻塞获取一个 /stream 推流 socket（由手机遥控线程 accept 后转发）
 int HttpStreamServer::acceptClient()
 {
-    int client_socket = accept(server_fd, nullptr, nullptr);
-    if (client_socket < 0)
+    std::lock_guard<std::mutex> lock(stream_mtx_);
+    if (stream_sock_ < 0)
         return -1;
-    struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-    setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout));
-    monitor_log << "\n检测到浏览器连接 开始推流" << std::endl;
-    string header = "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Type: multipart/x-mixed-replace; boundary=--myboundary\r\n\r\n";
-    send(client_socket, header.c_str(), header.size(), MSG_NOSIGNAL);
-    return client_socket;
+    int s = stream_sock_;
+    stream_sock_ = -1;
+    return s;
+}
+
+// 启动手机浏览器遥控服务线程
+void HttpStreamServer::startControlLoop()
+{
+    std::thread(&HttpStreamServer::controlLoop, this).detach();
+}
+
+void HttpStreamServer::controlLoop()
+{
+    monitor_log << "[Monitor] 手机遥控服务已启动: 浏览器打开 http://[本板IP]:" << port_ << "/" << std::endl;
+    while (true)
+    {
+        int client = accept(server_fd, nullptr, nullptr);
+        if (client < 0)
+        {
+            usleep(10000);
+            continue;
+        }
+
+        struct timeval tv;
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        std::string request, path;
+        int type = readHttpRequest(client, request, path);
+
+        if (type == 1) // /stream -> 转交给主循环推流
+        {
+            monitor_log << "\n检测到浏览器连接 开始推流" << std::endl;
+            std::string header = "HTTP/1.0 200 OK\r\nConnection: close\r\nContent-Type: multipart/x-mixed-replace; boundary=--myboundary\r\n\r\n";
+            send(client, header.c_str(), header.size(), MSG_NOSIGNAL);
+            {
+                std::lock_guard<std::mutex> lock(stream_mtx_);
+                stream_sock_ = client;
+            }
+        }
+        else if (type == 2) // /ctrl 速度指令
+        {
+            handleControlCmd(client, request);
+            close(client);
+        }
+        else if (type == 3) // /cmd 文本指令
+        {
+            handleTextCmd(client, request);
+            close(client);
+        }
+        else // 默认: 控制页面
+        {
+            sendControlPage(client);
+            close(client);
+        }
+    }
+}
+
+// 读取并解析 HTTP 请求首行
+int HttpStreamServer::readHttpRequest(int fd, std::string &request, std::string &path)
+{
+    char tmp[1024];
+    while (request.size() < 8192)
+    {
+        int n = recv(fd, tmp, sizeof(tmp), 0);
+        if (n > 0)
+        {
+            request.append(tmp, n);
+            if (request.find("\r\n\r\n") != std::string::npos)
+                break;
+        }
+        else
+        {
+            break; // 0=断开, -1=超时/错误
+        }
+    }
+
+    path = "/";
+    size_t nl = request.find("\r\n");
+    if (nl == std::string::npos)
+        return 0;
+    std::string req_line = request.substr(0, nl);
+    size_t p1 = req_line.find(' ');
+    if (p1 == std::string::npos)
+        return 0;
+    size_t p2 = req_line.find(' ', p1 + 1);
+    path = (p2 != std::string::npos) ? req_line.substr(p1 + 1, p2 - p1 - 1)
+                                     : req_line.substr(p1 + 1);
+
+    if (path.find("/stream") == 0)
+        return 1;
+    if (path.find("/ctrl") == 0)
+        return 2;
+    if (path.find("/cmd") == 0)
+        return 3;
+    return 0;
+}
+
+// 处理 /ctrl?vel=vx,vy,vz -> 通过串口下发 VEL 指令给 Pilot
+void HttpStreamServer::handleControlCmd(int fd, const std::string &request)
+{
+    float vx = 0, vy = 0, vz = 0;
+    size_t vp = request.find("vel=");
+    if (vp != std::string::npos)
+    {
+        size_t ve = request.find_first_of(" \r\n&", vp + 4);
+        std::string val = (ve == std::string::npos)
+                              ? request.substr(vp + 4)
+                              : request.substr(vp + 4, ve - vp - 4);
+        sscanf(val.c_str(), "%f,%f,%f", &vx, &vy, &vz);
+    }
+
+    // 防呆限幅，防止异常输入打爆电机
+    auto clampf = [](float v, float lo, float hi)
+    { return v < lo ? lo : (v > hi ? hi : v); };
+    vx = clampf(vx, -800.0f, 800.0f);
+    vy = clampf(vy, -800.0f, 800.0f);
+    vz = clampf(vz, -800.0f, 800.0f);
+
+    // 通过串口下发 VEL 指令到 Pilot
+    if (g_serial_fd >= 0)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "VEL %.2f %.2f %.2f\r\n", vx, vy, vz);
+        write(g_serial_fd, cmd, strlen(cmd));
+        if (vx != 0 || vy != 0 || vz != 0)
+            monitor_log << "[手机遥控] VEL " << vx << " " << vy << " " << vz << std::endl;
+    }
+
+    std::string resp =
+        "HTTP/1.0 200 OK\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: 2\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n"
+        "OK";
+    send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
+}
+
+// ==========================================================
+// 手机遥控页面资源 (独立文件: web/index.html)
+// ==========================================================
+// 读取文本文件到 string；失败返回空串
+static std::string readFileToString(const std::string &path)
+{
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs)
+        return "";
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    return oss.str();
+}
+
+// 取路径所在目录 (不含末尾 '/')；无分隔符时返回 "."
+static std::string dirOf(const std::string &p)
+{
+    size_t slash = p.find_last_of('/');
+    if (slash == std::string::npos)
+        return ".";
+    return p.substr(0, slash);
+}
+
+// 取可执行文件所在目录 (Linux: /proc/self/exe)；失败返回空串
+static std::string exeDir()
+{
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0)
+        return "";
+    buf[n] = '\0';
+    return dirOf(std::string(buf));
+}
+
+// 简单 URL 解码 (%XX 与 '+')
+static int hexVal(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+static std::string urlDecode(const std::string &in)
+{
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i)
+    {
+        if (in[i] == '+')
+            out += ' ';
+        else if (in[i] == '%' && i + 2 < in.size())
+        {
+            int h = hexVal(in[i + 1]), l = hexVal(in[i + 2]);
+            if (h >= 0 && l >= 0)
+            {
+                out += (char)((h << 4) | l);
+                i += 2;
+            }
+            else
+                out += in[i];
+        }
+        else
+            out += in[i];
+    }
+    return out;
+}
+
+// 返回手机遥控控制页面 (从独立文件 web/index.html 读取)
+void HttpStreamServer::sendControlPage(int fd)
+{
+    // 查找顺序: 1) 二进制同目录 (推荐部署方式) 2) __FILE__ 推导的源码 web/ 3) 常见相对路径
+    std::string html;
+    std::vector<std::string> candidates;
+    const std::string exe = exeDir();
+    if (!exe.empty())
+    {
+        candidates.push_back(exe + "/index.html");
+        candidates.push_back(exe + "/web/index.html");
+    }
+    const std::string webBase = dirOf(__FILE__) + "/web/index.html";
+    candidates.push_back(webBase);
+    candidates.push_back("web/index.html");
+    candidates.push_back("monitor/web/index.html");
+    candidates.push_back("../monitor/web/index.html");
+
+    for (const auto &c : candidates)
+    {
+        html = readFileToString(c);
+        if (!html.empty())
+            break;
+    }
+
+    if (html.empty())
+    {
+        monitor_log << "[Monitor] ⚠ 未找到控制页面 web/index.html (搜索: " << webBase << " 等)，返回占位页" << std::endl;
+        html = "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>"
+               "<title>未找到页面</title></head>"
+               "<body style='background:#111;color:#eee;font-family:sans-serif;padding:20px'>"
+               "<h3>未找到控制页面 web/index.html</h3>"
+               "<p>请确保程序工作目录位于 img_process/ 或 img_process/build/ 下，"
+               "并确认 monitor/web/index.html 存在。</p></body></html>";
+    }
+
+    std::string header =
+        "HTTP/1.0 200 OK\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Content-Length: " +
+        std::to_string(html.size()) + "\r\n"
+                                      "\r\n";
+    send(fd, header.c_str(), header.size(), MSG_NOSIGNAL);
+    send(fd, html.c_str(), html.size(), MSG_NOSIGNAL);
+}
+
+// 处理 /cmd?text=XXX -> 调用 processTextCommand 执行任意文本指令
+void HttpStreamServer::handleTextCmd(int fd, const std::string &request)
+{
+    std::string text;
+    size_t tp = request.find("text=");
+    if (tp != std::string::npos)
+    {
+        size_t te = request.find_first_of(" \r\n&", tp + 5);
+        text = (te == std::string::npos) ? request.substr(tp + 5)
+                                         : request.substr(tp + 5, te - tp - 5);
+        text = urlDecode(text);
+    }
+
+    if (!text.empty())
+    {
+        monitor_log << "\n[手机指令] 收到文本指令: " << text << std::endl;
+        processTextCommand(text);
+    }
+
+    std::string resp =
+        "HTTP/1.0 200 OK\r\n"
+        "Connection: close\r\n"
+        "Content-Type: text/plain\r\n"
+        "Content-Length: 2\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "\r\n"
+        "OK";
+    send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
 }
 
 bool HttpStreamServer::sendFrame(int client_socket, const Mat &raw_frame, vector<uchar> &buffer, const vector<int> &encode_params)

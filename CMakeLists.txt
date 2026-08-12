@@ -23,7 +23,7 @@ file(GLOB MONITOR_SRCS "monitor/*.cpp")
 include_directories(
     "${OPENCV_INSTALL_DIR}/include/opencv4"
     "${CMAKE_SOURCE_DIR}/inc"
-    "${CMAKE_SOURCE_DIR}/ncnn_new/build_la64/install/include" 
+    "${CMAKE_SOURCE_DIR}/ncnn_new/build_la64/install/include"
     "${CMAKE_SOURCE_DIR}/monitor" # [新增] 确保能找到拆分出来的 .h 文件
 )
 
@@ -32,14 +32,25 @@ include_directories(
 # ==========================================
 add_executable(MonitorApp ${MONITOR_SRCS} src/ik_solver.c)
 
+# ==========================================
+# 【手机遥控页面】编译后自动拷贝到二进制同目录 (build/)
+# 这样部署时把 MonitorApp 连同 index.html 一起拷走即可
+# ==========================================
+add_custom_command(TARGET MonitorApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_SOURCE_DIR}/monitor/web/index.html"
+    "$<TARGET_FILE_DIR:MonitorApp>/index.html"
+    COMMENT "拷贝手机遥控页面 web/index.html 到二进制同目录"
+)
+
 # 确保链接 64 位的 .so 文件
 # 在末尾加上 m，链接 Linux 基础数学库，为逆解提供支持
 target_link_libraries(MonitorApp PRIVATE
     "${CMAKE_SOURCE_DIR}/ncnn_new/build_la64/install/lib/libncnn.a" # 静态链接 NCNN
-    "${OPENCV_INSTALL_DIR}/lib/libopencv_aruco.so"       # 强力插入 ArUco 动态库
-    "${OPENCV_INSTALL_DIR}/lib/libopencv_calib3d.so"     # 3D位姿解算与标定库
-    "${OPENCV_INSTALL_DIR}/lib/libopencv_features2d.so"  # 补全 calib3d 的依赖 1
-    "${OPENCV_INSTALL_DIR}/lib/libopencv_flann.so"       # 补全 calib3d 的依赖 2
+    "${OPENCV_INSTALL_DIR}/lib/libopencv_aruco.so" # 强力插入 ArUco 动态库
+    "${OPENCV_INSTALL_DIR}/lib/libopencv_calib3d.so" # 3D位姿解算与标定库
+    "${OPENCV_INSTALL_DIR}/lib/libopencv_features2d.so" # 补全 calib3d 的依赖 1
+    "${OPENCV_INSTALL_DIR}/lib/libopencv_flann.so" # 补全 calib3d 的依赖 2
     "${OPENCV_INSTALL_DIR}/lib/libopencv_videoio.so"
     "${OPENCV_INSTALL_DIR}/lib/libopencv_imgcodecs.so"
     "${OPENCV_INSTALL_DIR}/lib/libopencv_imgproc.so"
@@ -73,7 +84,7 @@ file(GLOB EVAL_SRCS "eval_app/src/*.cpp" "eval_app/src/*.c")
 add_executable(EvalApp ${EVAL_SRCS})
 
 # 包含测评工程的头文件目录
-target_include_directories(EvalApp PRIVATE 
+target_include_directories(EvalApp PRIVATE
     "${CMAKE_SOURCE_DIR}/eval_app/inc"
     "${OPENCV_INSTALL_DIR}/include/opencv4"
 )
