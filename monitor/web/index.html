@@ -234,7 +234,8 @@
             if (vel === lastVel) return;               // 速度没变化就不重复发，避免刷请求
             lastVel = vel;
             document.getElementById('status').textContent = (vx || vy || vz) ? '移动中' : '待机';
-            fetch('/ctrl?vel=' + encodeURIComponent(vel)).catch(() => { });
+            // 逗号/数字是 URL query 合法字符，勿用 encodeURIComponent(会变成 %2C 导致后端分割失败)
+            fetch('/ctrl?vel=' + vel).catch(() => { });
         }
 
         function press(k) { active.add(k); document.getElementById('b' + k).classList.add('down'); sendVel(); }

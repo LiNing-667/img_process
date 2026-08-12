@@ -149,6 +149,8 @@ int HttpStreamServer::readHttpRequest(int fd, std::string &request, std::string 
     return 0;
 }
 
+static std::string urlDecode(const std::string &in); // 前向声明 (定义在下方辅助函数区)
+
 // 处理 /ctrl?vel=vx,vy,vz -> 通过串口下发 VEL 指令给 Pilot
 void HttpStreamServer::handleControlCmd(int fd, const std::string &request)
 {
@@ -160,6 +162,7 @@ void HttpStreamServer::handleControlCmd(int fd, const std::string &request)
         std::string val = (ve == std::string::npos)
                               ? request.substr(vp + 4)
                               : request.substr(vp + 4, ve - vp - 4);
+        val = urlDecode(val); // 关键：还原 %2C 等编码，否则按逗号分割失败
         sscanf(val.c_str(), "%f,%f,%f", &vx, &vy, &vz);
     }
 
